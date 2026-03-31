@@ -1,0 +1,28 @@
+version: '3.8'
+
+services:
+  db:
+    image: postgis/postgis:16-3.4
+    container_name: optigo-db
+    environment:
+      POSTGRES_USER: ${POSTGRES_USER:-optigo}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-optigo_pwd}
+      POSTGRES_DB: ${POSTGRES_DB:-optigo}
+    ports:
+      - "5432:5432"
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+    restart: unless-stopped
+
+  redis:
+    image: redis:7-alpine
+    container_name: optigo-redis
+    ports:
+      - "16379:6379"
+    volumes:
+      - redisdata:/data
+    restart: unless-stopped
+
+volumes:
+  pgdata:
+  redisdata:

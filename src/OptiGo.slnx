@@ -1,0 +1,6 @@
+<Solution>
+  <Project Path="OptiGo.Api/OptiGo.Api.csproj" />
+  <Project Path="OptiGo.Application/OptiGo.Application.csproj" />
+  <Project Path="OptiGo.Domain/OptiGo.Domain.csproj" />
+  <Project Path="OptiGo.Infrastructure/OptiGo.Infrastructure.csproj" />
+</Solution>

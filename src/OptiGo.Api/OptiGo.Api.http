@@ -1,0 +1,6 @@
+@OptiGo.Api_HostAddress = http://localhost:5096
+
+GET {{OptiGo.Api_HostAddress}}/weatherforecast/
+Accept: application/json
+
+###
