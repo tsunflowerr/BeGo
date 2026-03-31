@@ -26,6 +26,10 @@ public class Session
     private readonly List<Vote> _votes = new();
     public IReadOnlyCollection<Vote> Votes => _votes.AsReadOnly();
 
+    // Lưu mảng ID của các quán Cafe lọt top chung cuộc
+    private readonly List<string> _nominatedVenueIds = new();
+    public IReadOnlyCollection<string> NominatedVenueIds => _nominatedVenueIds.AsReadOnly();
+
     // EF Core cần private parameterless constructor
     private Session() { }
 
@@ -95,10 +99,19 @@ public class Session
         if (!_members.Any(m => m.Id == vote.MemberId))
             throw new DomainException("Only members of the session can vote.");
 
+        if (!_nominatedVenueIds.Contains(vote.VenueId))
+            throw new DomainException("Can only vote for nominated venues.");
+
         if (_votes.Any(v => v.MemberId == vote.MemberId))
             throw new DomainException("Member has already voted.");
 
         _votes.Add(vote);
+    }
+
+    public void SetNominatedVenues(IEnumerable<string> venueIds)
+    {
+        _nominatedVenueIds.Clear();
+        _nominatedVenueIds.AddRange(venueIds);
     }
 
     public bool AllMembersVoted() => _votes.Count == _members.Count && _members.Count > 0;

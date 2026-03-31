@@ -39,6 +39,12 @@ public class SessionConfiguration : IEntityTypeConfiguration<Session>
             .HasColumnName("expires_at")
             .IsRequired();
 
+        // Mảng NominatedVenueIds sử dụng tính năng primitive collections của EF Core (text[])
+        builder.Property(s => s.NominatedVenueIds)
+            .HasColumnName("nominated_venue_ids")
+            .HasColumnType("text[]")
+            .UsePropertyAccessMode(PropertyAccessMode.Field);
+
         // Cấu hình relationship Session → Members (1:N)
         // EF Core access backing field "_members" 
         builder.HasMany(s => s.Members)

@@ -1,4 +1,10 @@
 using OptiGo.Infrastructure;
+using DotNetEnv;
+
+// Đọc từ thư mục root của solution trước, nếu chạy qua dotnet run từ folder src/OptiGo.Api
+Env.Load("../../.env");
+// Đọc từ current directory nếu publish/docker
+Env.Load(".env");
 
 var builder = WebApplication.CreateBuilder(args);
 

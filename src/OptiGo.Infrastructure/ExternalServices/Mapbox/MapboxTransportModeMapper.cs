@@ -21,9 +21,9 @@ public static class MapboxTransportModeMapper
     {
         TransportMode.Walking  => "walking",
         TransportMode.Cycling  => "cycling",
-        TransportMode.Motorbike => "driving-traffic",
-        TransportMode.Car      => "driving-traffic",
-        TransportMode.Bus      => "driving-traffic",
+        TransportMode.Motorbike => "driving",
+        TransportMode.Car      => "driving",
+        TransportMode.Bus      => "driving",
         _ => throw new ArgumentOutOfRangeException(nameof(mode), mode, "Unknown transport mode")
     };
 

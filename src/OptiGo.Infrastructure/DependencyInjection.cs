@@ -36,11 +36,21 @@ public static class DependencyInjection
         services.AddScoped<ISessionRepository, SessionRepository>();
         services.AddScoped<IVenueRepository, VenueRepository>();
 
-        // ── Mapbox Travel Time Service ──
-        services.Configure<MapboxOptions>(
-            configuration.GetSection(MapboxOptions.SectionName));
+        // ── External APIs (Hybrid Network) ──
+        // 1. Google cho Places API (Mạnh về POI Việt Nam)
+        services.Configure<OptiGo.Infrastructure.ExternalServices.Google.GoogleOptions>(
+            configuration.GetSection("Google"));
+        
+        services.AddHttpClient<IPlacesProvider, OptiGo.Infrastructure.ExternalServices.Google.GooglePlacesProvider>(client =>
+        {
+            client.Timeout = TimeSpan.FromSeconds(30);
+        });
 
-        services.AddHttpClient<ITravelTimeService, MapboxTravelTimeService>(client =>
+        // 2. Mapbox cho Matrix API (Miễn phí 100k elements/tháng, rẻ hơn Google rất nhiều)
+        services.Configure<OptiGo.Infrastructure.ExternalServices.Mapbox.MapboxOptions>(
+            configuration.GetSection("Mapbox"));
+
+        services.AddHttpClient<ITravelTimeService, OptiGo.Infrastructure.ExternalServices.Mapbox.MapboxTravelTimeService>(client =>
         {
             client.Timeout = TimeSpan.FromSeconds(30);
         });
