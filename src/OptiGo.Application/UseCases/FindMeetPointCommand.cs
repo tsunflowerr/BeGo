@@ -23,8 +23,16 @@ public class CandidateResultDto
     public string? Address { get; set; }
     public double Rating { get; set; }
     public int ReviewCount { get; set; }
-    
-    // Scoring info
     public double TotalTimeSeconds { get; set; }
     public double FinalScore { get; set; }
+    public List<string> PhotoUrls { get; set; } = new();
+    public string? AiReviewSummary { get; set; }
+    public List<ReviewDto> TopReviews { get; set; } = new();
+}
+public class ReviewDto
+{
+    public string AuthorName { get; set; } = null!;
+    public double Rating { get; set; }
+    public string Text { get; set; } = null!;
+    public string? RelativeTime { get; set; } // V� d?: "2 th�ng tr??c"
 }

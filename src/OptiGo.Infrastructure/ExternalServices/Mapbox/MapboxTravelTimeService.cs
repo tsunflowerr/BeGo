@@ -66,9 +66,12 @@ public class MapboxTravelTimeService : ITravelTimeService
             allCoords.Select(c => $"{c.Longitude:F6},{c.Latitude:F6}"));
 
         // sources = indices của origins, destinations = indices của destinations
-        var sourceIndices = string.Join(";", Enumerable.Range(0, origins.Count));
-        var destIndices = string.Join(";",
-            Enumerable.Range(origins.Count, destinations.Count));
+        var maxPossibleCoords = Math.Min(allCoords.Count, MaxCoordinatesPerRequest);
+        var sourceCount = Math.Min(origins.Count, maxPossibleCoords);
+        var destCount = Math.Min(destinations.Count, maxPossibleCoords - sourceCount);
+
+        var sourceIndices = string.Join(";", Enumerable.Range(0, sourceCount));
+        var destIndices = string.Join(";", Enumerable.Range(sourceCount, destCount));
 
         var url = $"{_options.BaseUrl}/{profile}/{coordinatesStr}" +
                   $"?sources={sourceIndices}" +
@@ -97,9 +100,16 @@ public class MapboxTravelTimeService : ITravelTimeService
         {
             for (int j = 0; j < destinations.Count; j++)
             {
+                // Nếu vượt quá giới hạn 25 coords, những cặp (i,j) không được gọi sẽ nhận penalty cao
+                if (i >= sourceCount || j >= destCount || result.Durations == null || i >= result.Durations.Count || j >= result.Durations[i].Count)
+                {
+                    matrix[i, j] = 999999 * adjustmentFactor; // Penalty rất cao
+                    continue;
+                }
+
                 var duration = result.Durations[i][j];
                 // null = không tìm được route, set giá trị penalty cao
-                matrix[i, j] = (duration ?? double.MaxValue) * adjustmentFactor;
+                matrix[i, j] = (duration ?? 999999.0) * adjustmentFactor;
             }
         }
 

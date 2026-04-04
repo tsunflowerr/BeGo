@@ -64,15 +64,16 @@ public class FindMeetPointHandler : IRequestHandler<FindMeetPointCommand, FindMe
                 session.Id, geometricMedian.Latitude, geometricMedian.Longitude);
 
             // 4. AI phân tích ngôn ngữ tự nhiên → Google Places category
-            // QueryText có thể từ Session hoặc từ request, ưu tiên theo thứ tự: request.Category → session.QueryText → "cafe"
-            var queryText = !string.IsNullOrWhiteSpace(request.Category) 
+            var queryText = (!string.IsNullOrWhiteSpace(request.Category) && request.Category != "cafe")
                 ? request.Category 
-                : session.QueryText ?? "cafe";
+                : (!string.IsNullOrWhiteSpace(session.QueryText) ? session.QueryText : "cafe");
 
+            _logger.LogInformation("Starting AI resolution for query: '{Query}'", queryText);
             var category = await _aiService.ResolveCategoryAsync(queryText, cancellationToken);
             _logger.LogInformation("AI resolved query '{Query}' → category '{Category}'", queryText, category);
 
             // 5. Tìm kiếm các Venues tiềm năng dùng Places Provider trong 3km
+            _logger.LogInformation("Searching venues for category '{Category}' at {Lat},{Lng}", category, geometricMedian.Latitude, geometricMedian.Longitude);
             var rawVenues = await _placesProvider.SearchNearbyAsync(
                 geometricMedian.Latitude, geometricMedian.Longitude, category, radiusMeters: 3000, limit: 50, cancellationToken);
 
@@ -135,6 +136,18 @@ public class FindMeetPointHandler : IRequestHandler<FindMeetPointCommand, FindMe
             var top3Result = top3Scores.Select(score => 
             {
                 var venue = top3VenueEntities.First(v => v.Id == score.VenueId);
+                int venueIndex = filteredVenues.FindIndex(v => v.Id == venue.Id);
+
+                // Build danh sách routes cho từng member tới venue này
+                var memberRoutes = membersList.Select((member, memberIndex) => new MemberRouteDto
+                {
+                    MemberId = member.Id,
+                    MemberName = member.Name,
+                    EstimatedTimeSeconds = matrix[memberIndex, venueIndex],
+                    // Tạm tính khoảng cách đường chim bay làm fallback (Khoảng cách routing Mapbox sẽ cần API khác)
+                    DistanceMeters = member.GetLocation().DistanceTo(venue.GetLocation())
+                }).ToList();
+
                 return new CandidateResultDto
                 {
                     VenueId = score.VenueId,
@@ -146,7 +159,10 @@ public class FindMeetPointHandler : IRequestHandler<FindMeetPointCommand, FindMe
                     Rating = venue.Rating,
                     ReviewCount = venue.ReviewCount,
                     TotalTimeSeconds = score.TotalTimeSeconds,
-                    FinalScore = score.FinalScore
+                    FinalScore = score.FinalScore,
+                    MemberRoutes = memberRoutes,
+                    // TODO: Mở rộng các trường: PhotoUrls, TopReviews từ Google Places API
+                    // TODO: Mở rộng AiReviewSummary qua _aiService
                 };
             }).ToList();
 

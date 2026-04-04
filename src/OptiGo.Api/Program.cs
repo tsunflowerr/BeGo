@@ -1,5 +1,6 @@
 using OptiGo.Infrastructure;
 using DotNetEnv;
+using Scalar.AspNetCore;
 
 // Đọc từ thư mục root của solution trước, nếu chạy qua dotnet run từ folder src/OptiGo.Api
 Env.Load("../../.env");
@@ -43,6 +44,7 @@ var app = builder.Build();
 if (app.Environment.IsDevelopment())
 {
     app.MapOpenApi();
+    app.MapScalarApiReference();
 }
 
 app.UseHttpsRedirection();

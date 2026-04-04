@@ -117,33 +117,42 @@ public class GeminiAIService : IAIService
                 },
                 generationConfig = new
                 {
-                    temperature = 0.1,      
-                    maxOutputTokens = 20    
+                    temperature = 0.1,
+                    maxOutputTokens = 20
                 }
             };
 
             var response = await _http.PostAsJsonAsync(url, requestBody, cancellationToken);
-            response.EnsureSuccessStatusCode();
-
-            var json = await response.Content.ReadFromJsonAsync<JsonElement>(cancellationToken: cancellationToken);
-
-            var rawText = json
-                .GetProperty("candidates")[0]
-                .GetProperty("content")
-                .GetProperty("parts")[0]
-                .GetProperty("text")
-                .GetString()
-                ?.Trim().ToLowerInvariant() ?? "cafe";
-
-            // Validate: nếu kết quả không nằm trong danh sách hợp lệ → fallback
-            if (!ValidCategories.Contains(rawText))
+            if (!response.IsSuccessStatusCode)
             {
-                _logger.LogWarning("Gemini returned unknown category '{Raw}' for query '{Query}'. Falling back to 'cafe'.", rawText, query);
+                var errorMsg = await response.Content.ReadAsStringAsync(cancellationToken);
+                _logger.LogWarning("Gemini API returned error: {StatusCode} - {Message}. Falling back to 'cafe'.", response.StatusCode, errorMsg);
                 return "cafe";
             }
 
-            _logger.LogInformation("Gemini resolved '{Query}' → '{Category}'", query, rawText);
-            return rawText;
+            var json = await response.Content.ReadFromJsonAsync<JsonElement>(cancellationToken: cancellationToken);
+            
+            // Parsing an toàn để tránh NullReferenceException hoặc KeyNotFoundException
+            if (json.TryGetProperty("candidates", out var candidates) && 
+                candidates.GetArrayLength() > 0 &&
+                candidates[0].TryGetProperty("content", out var content) &&
+                content.TryGetProperty("parts", out var parts) &&
+                parts.GetArrayLength() > 0 &&
+                parts[0].TryGetProperty("text", out var text))
+            {
+                var rawText = text.GetString()?.Trim().ToLowerInvariant() ?? "cafe";
+
+                // Validate: nếu kết quả không nằm trong danh sách hợp lệ → fallback
+                if (ValidCategories.Contains(rawText))
+                {
+                    _logger.LogInformation("Gemini resolved '{Query}' → '{Category}'", query, rawText);
+                    return rawText;
+                }
+                
+                _logger.LogWarning("Gemini returned unknown category '{Raw}' for query '{Query}'. Falling back to 'cafe'.", rawText, query);
+            }
+            
+            return "cafe";
         }
         catch (Exception ex)
         {

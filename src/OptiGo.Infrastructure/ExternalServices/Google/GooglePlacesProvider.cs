@@ -44,15 +44,7 @@ public class GooglePlacesProvider : IPlacesProvider
     {
         var url = "https://places.googleapis.com/v1/places:searchNearby";
 
-        // Map category sang Google Place Type
-        var primaryType = category.ToLower() switch
-        {
-            "cafe" => "cafe",
-            "coffee" => "coffee_shop",
-            "restaurant" => "restaurant",
-            "park" => "park",
-            _ => "cafe"
-        };
+        var primaryType = !string.IsNullOrWhiteSpace(category) ? category.ToLower() : "cafe";
 
         var requestBody = new
         {
