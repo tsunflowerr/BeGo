@@ -20,4 +20,35 @@ public interface IPlacesProvider
         double radiusMeters = 2000,
         int limit = 50,
         CancellationToken ct = default);
+
+    /// <summary>
+    /// Lấy thông tin chi tiết của một địa điểm bao gồm ảnh, reviews, và AI summary.
+    /// </summary>
+    /// <param name="placeId">ID của địa điểm (Google Place ID)</param>
+    /// <param name="ct">Cancellation token</param>
+    /// <returns>Chi tiết địa điểm bao gồm photos, reviews, AI summary</returns>
+    Task<PlaceDetailResult> GetPlaceDetailAsync(string placeId, CancellationToken ct = default);
+}
+
+/// <summary>
+/// Kết quả chi tiết của một địa điểm từ Places API.
+/// </summary>
+public class PlaceDetailResult
+{
+    public string PlaceId { get; set; } = null!;
+    public List<string> PhotoUrls { get; set; } = new();
+    public string? AiReviewSummary { get; set; }
+    public List<PlaceReview> Reviews { get; set; } = new();
+}
+
+/// <summary>
+/// Thông tin một review từ người dùng.
+/// </summary>
+public class PlaceReview
+{
+    public string AuthorName { get; set; } = null!;
+    public double Rating { get; set; }
+    public string Text { get; set; } = null!;
+    public string? RelativeTime { get; set; }
+    public string? AuthorPhotoUrl { get; set; }
 }

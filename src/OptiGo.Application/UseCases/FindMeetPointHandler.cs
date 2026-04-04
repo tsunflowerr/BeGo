@@ -86,10 +86,11 @@ public class FindMeetPointHandler : IRequestHandler<FindMeetPointCommand, FindMe
             var filteredVenues = CandidateFilter.FilterTopCandidates(session.Members.ToList(), rawVenues, topN: 25);
             var venueLocations = filteredVenues.Select(v => v.GetLocation()).ToList();
 
-            // 6. Tính Travel Time Matrix qua external API (Mapbox)
+            // 6. Tính Travel Time + Distance Matrix qua external API (Mapbox/Google)
             // Chia cụm (Batching) theo Transport Mode của từng Member để tránh sai lệch thời gian di chuyển
             var membersList = session.Members.ToList();
-            var matrix = new double[membersList.Count, venueLocations.Count];
+            var durationMatrix = new double[membersList.Count, venueLocations.Count];
+            var distanceMatrix = new double[membersList.Count, venueLocations.Count];
 
             var modeGroups = membersList
                 .Select((m, index) => new { Member = m, Index = index })
@@ -99,8 +100,8 @@ public class FindMeetPointHandler : IRequestHandler<FindMeetPointCommand, FindMe
             {
                 var groupOrigins = group.Select(x => x.Member.GetLocation()).ToList();
                 
-                // Gọi Matrix API cho phương tiện cụ thể (VD: Walking, Bus, Motorbike)
-                var groupMatrix = await _travelTimeService.GetTravelTimeMatrixAsync(
+                // Gọi Matrix API cho phương tiện cụ thể - lấy cả duration và distance trong 1 request
+                var matrixResult = await _travelTimeService.GetTravelMatrixAsync(
                     groupOrigins, venueLocations, group.Key, cancellationToken);
                     
                 // Ghép mảng kết quả vào ma trận tổng (theo đúng Index của Member trong cơ sở dữ liệu)
@@ -109,7 +110,8 @@ public class FindMeetPointHandler : IRequestHandler<FindMeetPointCommand, FindMe
                 {
                     for (int v = 0; v < venueLocations.Count; v++)
                     {
-                        matrix[item.Index, v] = groupMatrix[groupRow, v];
+                        durationMatrix[item.Index, v] = matrixResult.Durations[groupRow, v];
+                        distanceMatrix[item.Index, v] = matrixResult.Distances[groupRow, v];
                     }
                     groupRow++;
                 }
@@ -117,7 +119,7 @@ public class FindMeetPointHandler : IRequestHandler<FindMeetPointCommand, FindMe
 
             // 7. Scoring (Min-Max Normalization đa mục tiêu)
             var currentWeights = ScoringWeights.Default; // Có thể tải từ DB theo cài đặt Session
-            var topScoredVenues = ScoringEngine.CalculateScores(filteredVenues, matrix, currentWeights, membersList.Count);
+            var topScoredVenues = ScoringEngine.CalculateScores(filteredVenues, durationMatrix, currentWeights, membersList.Count);
 
             // Trích xuất Top 3
             var top3Scores = topScoredVenues.Take(3).ToList();
@@ -132,39 +134,11 @@ public class FindMeetPointHandler : IRequestHandler<FindMeetPointCommand, FindMe
             session.ChangeStatus(SessionStatus.Voting);
             await _unitOfWork.SaveChangesAsync(cancellationToken);
 
-            // 10. Map CandidateResultDto chứa Tên quán/Địa chỉ cho Frontend
-            var top3Result = top3Scores.Select(score => 
-            {
-                var venue = top3VenueEntities.First(v => v.Id == score.VenueId);
-                int venueIndex = filteredVenues.FindIndex(v => v.Id == venue.Id);
-
-                // Build danh sách routes cho từng member tới venue này
-                var memberRoutes = membersList.Select((member, memberIndex) => new MemberRouteDto
-                {
-                    MemberId = member.Id,
-                    MemberName = member.Name,
-                    EstimatedTimeSeconds = matrix[memberIndex, venueIndex],
-                    // Tạm tính khoảng cách đường chim bay làm fallback (Khoảng cách routing Mapbox sẽ cần API khác)
-                    DistanceMeters = member.GetLocation().DistanceTo(venue.GetLocation())
-                }).ToList();
-
-                return new CandidateResultDto
-                {
-                    VenueId = score.VenueId,
-                    Name = venue.Name,
-                    Category = venue.Category,
-                    Latitude = venue.Latitude,
-                    Longitude = venue.Longitude,
-                    Address = venue.Address,
-                    Rating = venue.Rating,
-                    ReviewCount = venue.ReviewCount,
-                    TotalTimeSeconds = score.TotalTimeSeconds,
-                    FinalScore = score.FinalScore,
-                    MemberRoutes = memberRoutes,
-                    // TODO: Mở rộng các trường: PhotoUrls, TopReviews từ Google Places API
-                    // TODO: Mở rộng AiReviewSummary qua _aiService
-                };
-            }).ToList();
+            // 10. Lấy thông tin chi tiết cho Top 3 (photos, reviews, AI summary)
+            // Distance đã có sẵn từ Matrix API - không cần gọi thêm API nào
+            var top3Result = await EnrichTop3VenuesAsync(
+                top3Scores, top3VenueEntities, filteredVenues, membersList, 
+                durationMatrix, distanceMatrix, cancellationToken);
 
             return new FindMeetPointResult
             {
@@ -180,5 +154,86 @@ public class FindMeetPointHandler : IRequestHandler<FindMeetPointCommand, FindMe
             await _unitOfWork.SaveChangesAsync(cancellationToken);
             return new FindMeetPointResult { IsSuccess = false, ErrorMessage = ex.Message };
         }
+    }
+
+    /// <summary>
+    /// Enrich Top 3 venues với thông tin chi tiết từ Google Places Detail API.
+    /// Distance đã được lấy từ Matrix API - không cần gọi thêm Directions API.
+    /// </summary>
+    private async Task<List<CandidateResultDto>> EnrichTop3VenuesAsync(
+        List<CandidateScore> top3Scores,
+        List<Venue> top3VenueEntities,
+        IReadOnlyList<Venue> filteredVenues,
+        List<Member> membersList,
+        double[,] durationMatrix,
+        double[,] distanceMatrix,
+        CancellationToken cancellationToken)
+    {
+        var results = new List<CandidateResultDto>();
+
+        // Parallel fetch place details cho tất cả top 3 venues
+        _logger.LogInformation("Fetching place details for {Count} top venues", top3VenueEntities.Count);
+        var detailTasks = top3VenueEntities.Select(v => _placesProvider.GetPlaceDetailAsync(v.Id, cancellationToken)).ToList();
+        var placeDetails = await Task.WhenAll(detailTasks);
+        var detailsDict = placeDetails.ToDictionary(d => d.PlaceId, d => d);
+
+        // Build result DTOs - distance đã có sẵn từ Matrix API
+        foreach (var score in top3Scores)
+        {
+            var venue = top3VenueEntities.First(v => v.Id == score.VenueId);
+            
+            // Tìm index của venue trong filteredVenues
+            int venueIndex = -1;
+            for (int i = 0; i < filteredVenues.Count; i++)
+            {
+                if (filteredVenues[i].Id == venue.Id)
+                {
+                    venueIndex = i;
+                    break;
+                }
+            }
+
+            // Lấy place detail (nếu có)
+            detailsDict.TryGetValue(venue.Id, out var placeDetail);
+
+            // Build danh sách routes cho từng member tới venue này
+            // Distance đã được lấy từ Matrix API - không cần gọi thêm API
+            var memberRoutes = membersList.Select((member, memberIndex) => new MemberRouteDto
+            {
+                MemberId = member.Id,
+                MemberName = member.Name,
+                EstimatedTimeSeconds = durationMatrix[memberIndex, venueIndex],
+                DistanceMeters = distanceMatrix[memberIndex, venueIndex]
+            }).ToList();
+
+            var candidateDto = new CandidateResultDto
+            {
+                VenueId = score.VenueId,
+                Name = venue.Name,
+                Category = venue.Category,
+                Latitude = venue.Latitude,
+                Longitude = venue.Longitude,
+                Address = venue.Address,
+                Rating = venue.Rating,
+                ReviewCount = venue.ReviewCount,
+                TotalTimeSeconds = score.TotalTimeSeconds,
+                FinalScore = score.FinalScore,
+                MemberRoutes = memberRoutes,
+                // Thông tin chi tiết từ Google Places Detail API
+                PhotoUrls = placeDetail?.PhotoUrls ?? new List<string>(),
+                AiReviewSummary = placeDetail?.AiReviewSummary,
+                TopReviews = placeDetail?.Reviews.Select(r => new ReviewDto
+                {
+                    AuthorName = r.AuthorName,
+                    Rating = r.Rating,
+                    Text = r.Text,
+                    RelativeTime = r.RelativeTime
+                }).ToList() ?? new List<ReviewDto>()
+            };
+
+            results.Add(candidateDto);
+        }
+
+        return results;
     }
 }

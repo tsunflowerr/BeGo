@@ -28,11 +28,20 @@ public class CandidateResultDto
     public List<string> PhotoUrls { get; set; } = new();
     public string? AiReviewSummary { get; set; }
     public List<ReviewDto> TopReviews { get; set; } = new();
+    public List<MemberRouteDto> MemberRoutes { get; set; } = new();
 }
 public class ReviewDto
 {
     public string AuthorName { get; set; } = null!;
     public double Rating { get; set; }
     public string Text { get; set; } = null!;
-    public string? RelativeTime { get; set; } // V� d?: "2 th�ng tr??c"
+    public string? RelativeTime { get; set; } 
+}
+
+public class MemberRouteDto
+{
+    public Guid MemberId { get; set; }
+    public string MemberName { get; set; } = null!;
+    public double EstimatedTimeSeconds { get; set; }
+    public double DistanceMeters { get; set; }
 }

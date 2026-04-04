@@ -18,6 +18,7 @@ public class MapboxOptions
 
 /// <summary>
 /// Adapter triển khai ITravelTimeService bằng Mapbox Matrix API.
+/// Matrix API trả về cả duration và distance trong 1 request - tối ưu billing.
 /// Khi muốn chuyển sang Google, tạo 1 class mới implement ITravelTimeService
 /// rồi swap DI registration — Application/Domain code không cần thay đổi gì.
 /// </summary>
@@ -46,6 +47,21 @@ public class MapboxTravelTimeService : ITravelTimeService
         TransportMode mode,
         CancellationToken ct = default)
     {
+        // Delegate to GetTravelMatrixAsync and return only durations
+        var result = await GetTravelMatrixAsync(origins, destinations, mode, ct);
+        return result.Durations;
+    }
+
+    /// <summary>
+    /// Lấy cả ma trận duration và distance trong 1 API call.
+    /// Tối ưu billing so với gọi Directions API riêng cho từng cặp.
+    /// </summary>
+    public async Task<TravelMatrixResult> GetTravelMatrixAsync(
+        IReadOnlyList<Coordinate> origins,
+        IReadOnlyList<Coordinate> destinations,
+        TransportMode mode,
+        CancellationToken ct = default)
+    {
         var profile = MapboxTransportModeMapper.ToMapboxProfile(mode);
         var adjustmentFactor = MapboxTransportModeMapper.GetAdjustmentFactor(mode);
 
@@ -58,14 +74,12 @@ public class MapboxTravelTimeService : ITravelTimeService
             _logger.LogWarning(
                 "Mapbox Matrix API limit: {Count} coordinates exceeds max {Max}. Truncating.",
                 allCoords.Count, MaxCoordinatesPerRequest);
-            // Trong production nên chunk requests, tạm thời truncate
             allCoords = allCoords.Take(MaxCoordinatesPerRequest).ToList();
         }
 
         var coordinatesStr = string.Join(";",
             allCoords.Select(c => $"{c.Longitude:F6},{c.Latitude:F6}"));
 
-        // sources = indices của origins, destinations = indices của destinations
         var maxPossibleCoords = Math.Min(allCoords.Count, MaxCoordinatesPerRequest);
         var sourceCount = Math.Min(origins.Count, maxPossibleCoords);
         var destCount = Math.Min(destinations.Count, maxPossibleCoords - sourceCount);
@@ -73,10 +87,11 @@ public class MapboxTravelTimeService : ITravelTimeService
         var sourceIndices = string.Join(";", Enumerable.Range(0, sourceCount));
         var destIndices = string.Join(";", Enumerable.Range(sourceCount, destCount));
 
+        // annotations=duration,distance để lấy cả 2 trong 1 request
         var url = $"{_options.BaseUrl}/{profile}/{coordinatesStr}" +
                   $"?sources={sourceIndices}" +
                   $"&destinations={destIndices}" +
-                  $"&annotations=duration" +
+                  $"&annotations=duration,distance" +
                   $"&access_token={_options.ApiKey}";
 
         _logger.LogInformation(
@@ -94,26 +109,44 @@ public class MapboxTravelTimeService : ITravelTimeService
             throw new InvalidOperationException("Mapbox Matrix API returned null durations.");
         }
 
-        // Convert List<List<double?>> thành double[,] matrix
-        var matrix = new double[origins.Count, destinations.Count];
+        // Convert List<List<double?>> thành double[,] matrices
+        var durations = new double[origins.Count, destinations.Count];
+        var distances = new double[origins.Count, destinations.Count];
+
         for (int i = 0; i < origins.Count; i++)
         {
             for (int j = 0; j < destinations.Count; j++)
             {
-                // Nếu vượt quá giới hạn 25 coords, những cặp (i,j) không được gọi sẽ nhận penalty cao
-                if (i >= sourceCount || j >= destCount || result.Durations == null || i >= result.Durations.Count || j >= result.Durations[i].Count)
+                if (i >= sourceCount || j >= destCount || 
+                    i >= result.Durations.Count || j >= result.Durations[i].Count)
                 {
-                    matrix[i, j] = 999999 * adjustmentFactor; // Penalty rất cao
+                    durations[i, j] = 999999 * adjustmentFactor;
+                    distances[i, j] = 999999;
                     continue;
                 }
 
                 var duration = result.Durations[i][j];
-                // null = không tìm được route, set giá trị penalty cao
-                matrix[i, j] = (duration ?? 999999.0) * adjustmentFactor;
+                durations[i, j] = (duration ?? 999999.0) * adjustmentFactor;
+
+                // Distance nếu có
+                if (result.Distances != null && i < result.Distances.Count && j < result.Distances[i].Count)
+                {
+                    var distance = result.Distances[i][j];
+                    distances[i, j] = distance ?? 999999;
+                }
+                else
+                {
+                    // Fallback: tính khoảng cách chim bay nếu API không trả về distance
+                    distances[i, j] = origins[i].DistanceTo(destinations[j]);
+                }
             }
         }
 
-        return matrix;
+        return new TravelMatrixResult
+        {
+            Durations = durations,
+            Distances = distances
+        };
     }
 }
 
@@ -125,4 +158,7 @@ internal class MapboxMatrixResponse
 
     [JsonPropertyName("durations")]
     public List<List<double?>>? Durations { get; set; }
+
+    [JsonPropertyName("distances")]
+    public List<List<double?>>? Distances { get; set; }
 }
