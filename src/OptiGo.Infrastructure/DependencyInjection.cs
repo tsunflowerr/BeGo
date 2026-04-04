@@ -2,6 +2,7 @@ using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.DependencyInjection;
 using OptiGo.Application.Interfaces;
+using OptiGo.Infrastructure.ExternalServices.Gemini;
 using OptiGo.Infrastructure.ExternalServices.Mapbox;
 using OptiGo.Infrastructure.Persistence;
 using OptiGo.Infrastructure.Persistence.Repositories;
@@ -53,6 +54,13 @@ public static class DependencyInjection
         services.AddHttpClient<ITravelTimeService, OptiGo.Infrastructure.ExternalServices.Mapbox.MapboxTravelTimeService>(client =>
         {
             client.Timeout = TimeSpan.FromSeconds(30);
+        });
+
+        // 3. Gemini cho AI (Phân tích ngôn ngữ tự nhiên → category)
+        services.Configure<GeminiOptions>(configuration.GetSection("Gemini"));
+        services.AddHttpClient<IAIService, GeminiAIService>(client =>
+        {
+            client.Timeout = TimeSpan.FromSeconds(15);
         });
 
         return services;

@@ -14,6 +14,7 @@ public class FindMeetPointHandler : IRequestHandler<FindMeetPointCommand, FindMe
     private readonly IVenueRepository _venueRepository;
     private readonly IPlacesProvider _placesProvider;
     private readonly ITravelTimeService _travelTimeService;
+    private readonly IAIService _aiService;
     private readonly IUnitOfWork _unitOfWork;
     private readonly ILogger<FindMeetPointHandler> _logger;
 
@@ -22,6 +23,7 @@ public class FindMeetPointHandler : IRequestHandler<FindMeetPointCommand, FindMe
         IVenueRepository venueRepository,
         IPlacesProvider placesProvider,
         ITravelTimeService travelTimeService,
+        IAIService aiService,
         IUnitOfWork unitOfWork,
         ILogger<FindMeetPointHandler> logger)
     {
@@ -29,6 +31,7 @@ public class FindMeetPointHandler : IRequestHandler<FindMeetPointCommand, FindMe
         _venueRepository = venueRepository;
         _placesProvider = placesProvider;
         _travelTimeService = travelTimeService;
+        _aiService = aiService;
         _unitOfWork = unitOfWork;
         _logger = logger;
     }
@@ -60,9 +63,18 @@ public class FindMeetPointHandler : IRequestHandler<FindMeetPointCommand, FindMe
             _logger.LogInformation("Calculated Geometric Median for Session {Id}: {Lat}, {Lng}", 
                 session.Id, geometricMedian.Latitude, geometricMedian.Longitude);
 
-            // 4. Tìm kiếm các Venues tiềm năng dùng Places Provider (Mapbox/Google) trong 3km
+            // 4. AI phân tích ngôn ngữ tự nhiên → Google Places category
+            // QueryText có thể từ Session hoặc từ request, ưu tiên theo thứ tự: request.Category → session.QueryText → "cafe"
+            var queryText = !string.IsNullOrWhiteSpace(request.Category) 
+                ? request.Category 
+                : session.QueryText ?? "cafe";
+
+            var category = await _aiService.ResolveCategoryAsync(queryText, cancellationToken);
+            _logger.LogInformation("AI resolved query '{Query}' → category '{Category}'", queryText, category);
+
+            // 5. Tìm kiếm các Venues tiềm năng dùng Places Provider trong 3km
             var rawVenues = await _placesProvider.SearchNearbyAsync(
-                geometricMedian.Latitude, geometricMedian.Longitude, request.Category, radiusMeters: 3000, limit: 50, cancellationToken);
+                geometricMedian.Latitude, geometricMedian.Longitude, category, radiusMeters: 3000, limit: 50, cancellationToken);
 
             if (rawVenues.Count == 0)
             {

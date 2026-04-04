@@ -19,18 +19,15 @@ public class Session
     public DateTime CreatedAt { get; private set; }
     public DateTime ExpiresAt { get; private set; }
 
-    // EF Core sẽ access backing field "_members" thông qua convention
     private readonly List<Member> _members = new();
     public IReadOnlyCollection<Member> Members => _members.AsReadOnly();
 
     private readonly List<Vote> _votes = new();
     public IReadOnlyCollection<Vote> Votes => _votes.AsReadOnly();
 
-    // Lưu mảng ID của các quán Cafe lọt top chung cuộc
     private readonly List<string> _nominatedVenueIds = new();
     public IReadOnlyCollection<string> NominatedVenueIds => _nominatedVenueIds.AsReadOnly();
 
-    // EF Core cần private parameterless constructor
     private Session() { }
 
     public Session(string hostName)

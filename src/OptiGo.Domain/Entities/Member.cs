@@ -33,7 +33,11 @@ public class Member
     /// <summary>
     /// Lấy Coordinate Value Object (không lưu trực tiếp trong DB, được tính từ Lat/Lng).
     /// </summary>
-    public Coordinate GetLocation() => new(Latitude, Longitude);
+    
+    public Coordinate GetLocation()
+    {
+        return new Coordinate(Latitude, Longitude);
+    }
 
     public void UpdateLocation(Coordinate newLocation)
     {
