@@ -160,6 +160,46 @@ public class GeminiAIService : IAIService
             return "cafe"; // Luôn có fallback, không crash hệ thống
         }
     }
+
+    /// <summary>
+    /// Tóm tắt các reviews thành 1 câu tiếng Việt súc tích nhất bằng Gemini AI.
+    /// </summary>
+    public async Task<string> SummarizeReviewsAsync(IEnumerable<string> reviews, CancellationToken ct = default)
+    {
+        var reviewsList = reviews.ToList();
+        if (!reviewsList.Any()) return "Địa điểm này khá ổn, phù hợp để gặp gỡ.";
+
+        var combinedReviews = string.Join("\n- ", reviewsList);
+        var prompt = "Bạn là trợ lý ảo OptiGo AI. Hãy phân tích kỹ tất cả các đánh giá sau đây (tối đa 20 review) về một địa điểm và viết một câu tóm tắt cực kỳ súc tích nhưng đầy đủ ý (dưới 45 từ) bằng tiếng Việt. Hãy làm nổi bật những đặc trưng được nhiều người khen nhất hoặc những điểm cần lưu ý. Ngôn ngữ thân thiện, sành điệu, trẻ trung. " +
+                     "\n\nDanh sách đánh giá:\n- " + combinedReviews;
+
+        try
+        {
+            var url = $"https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent?key={_options.ApiKey}";
+            var requestBody = new { contents = new[] { new { parts = new[] { new { text = prompt } } } } };
+            
+            var response = await _http.PostAsJsonAsync(url, requestBody, ct);
+            if (!response.IsSuccessStatusCode) return "Địa điểm tuyệt vời, rất đáng để bạn trải nghiệm.";
+
+            var json = await response.Content.ReadFromJsonAsync<JsonElement>(ct);
+            if (json.TryGetProperty("candidates", out var candidates) && 
+                candidates.GetArrayLength() > 0 &&
+                candidates[0].TryGetProperty("content", out var content) &&
+                content.TryGetProperty("parts", out var parts) &&
+                parts.GetArrayLength() > 0 &&
+                parts[0].TryGetProperty("text", out var text))
+            {
+                return text.GetString()?.Trim() ?? "Không gian lý tưởng để gặp gỡ bạn bè.";
+            }
+
+            return "Không gian lý tưởng để bạn khám phá.";
+        }
+        catch (Exception ex)
+        {
+            _logger.LogError(ex, "Gemini Summarize failed.");
+            return "Địa điểm được đánh giá cao, phù hợp cho nhóm bạn.";
+        }
+    }
 }
 
 /// <summary>Cấu hình để inject từ appsettings / .env</summary>

@@ -160,6 +160,10 @@ public class FindMeetPointHandler : IRequestHandler<FindMeetPointCommand, FindMe
     /// Enrich Top 3 venues với thông tin chi tiết từ Google Places Detail API.
     /// Distance đã được lấy từ Matrix API - không cần gọi thêm Directions API.
     /// </summary>
+    /// <summary>
+    /// Enrich Top 3 venues với thông tin chi tiết từ Google Places Detail API.
+    /// Distance đã được lấy từ Matrix API - không cần gọi thêm Directions API.
+    /// </summary>
     private async Task<List<CandidateResultDto>> EnrichTop3VenuesAsync(
         List<CandidateScore> top3Scores,
         List<Venue> top3VenueEntities,
@@ -171,42 +175,59 @@ public class FindMeetPointHandler : IRequestHandler<FindMeetPointCommand, FindMe
     {
         var results = new List<CandidateResultDto>();
 
-        // Parallel fetch place details cho tất cả top 3 venues
+        // 1. Parallel fetch place details từ Google cho tất cả top venues
         _logger.LogInformation("Fetching place details for {Count} top venues", top3VenueEntities.Count);
         var detailTasks = top3VenueEntities.Select(v => _placesProvider.GetPlaceDetailAsync(v.Id, cancellationToken)).ToList();
         var placeDetails = await Task.WhenAll(detailTasks);
         var detailsDict = placeDetails.ToDictionary(d => d.PlaceId, d => d);
 
-        // Build result DTOs - distance đã có sẵn từ Matrix API
-        foreach (var score in top3Scores)
+        // 2. Parallel fetch AI summaries từ Gemini (hoặc dùng từ Google nếu có)
+        _logger.LogInformation("Generating AI summaries for top venues...");
+        var summaryTasks = top3Scores.Select(async score => {
+            var venue = top3VenueEntities.First(v => v.Id == score.VenueId);
+            detailsDict.TryGetValue(venue.Id, out var placeDetail);
+            
+            // Nếu Google không có tóm tắt AI, dùng Gemini để tóm tắt 20 review
+            if (string.IsNullOrEmpty(placeDetail?.AiReviewSummary))
+            {
+                var reviews = placeDetail?.Reviews.Select(r => r.Text) ?? new List<string>();
+                return await _aiService.SummarizeReviewsAsync(reviews, cancellationToken);
+            }
+            return placeDetail.AiReviewSummary;
+        }).ToList();
+        
+        var aiSummaries = await Task.WhenAll(summaryTasks);
+
+        // 3. Build result DTOs
+        for (int i = 0; i < top3Scores.Count; i++)
         {
+            var score = top3Scores[i];
             var venue = top3VenueEntities.First(v => v.Id == score.VenueId);
             
             // Tìm index của venue trong filteredVenues
             int venueIndex = -1;
-            for (int i = 0; i < filteredVenues.Count; i++)
+            for (int j = 0; j < filteredVenues.Count; j++)
             {
-                if (filteredVenues[i].Id == venue.Id)
+                if (filteredVenues[j].Id == venue.Id)
                 {
-                    venueIndex = i;
+                    venueIndex = j;
                     break;
                 }
             }
 
-            // Lấy place detail (nếu có)
+            if (venueIndex == -1) continue;
+
             detailsDict.TryGetValue(venue.Id, out var placeDetail);
 
-            // Build danh sách routes cho từng member tới venue này
-            // Distance đã được lấy từ Matrix API - không cần gọi thêm API
-            var memberRoutes = membersList.Select((member, memberIndex) => new MemberRouteDto
+            var memberRoutes = membersList.Select((member, memberIdx) => new MemberRouteDto
             {
                 MemberId = member.Id,
                 MemberName = member.Name,
-                EstimatedTimeSeconds = durationMatrix[memberIndex, venueIndex],
-                DistanceMeters = distanceMatrix[memberIndex, venueIndex]
+                EstimatedTimeSeconds = durationMatrix[memberIdx, venueIndex],
+                DistanceMeters = distanceMatrix[memberIdx, venueIndex]
             }).ToList();
 
-            var candidateDto = new CandidateResultDto
+            results.Add(new CandidateResultDto
             {
                 VenueId = score.VenueId,
                 Name = venue.Name,
@@ -219,9 +240,8 @@ public class FindMeetPointHandler : IRequestHandler<FindMeetPointCommand, FindMe
                 TotalTimeSeconds = score.TotalTimeSeconds,
                 FinalScore = score.FinalScore,
                 MemberRoutes = memberRoutes,
-                // Thông tin chi tiết từ Google Places Detail API
                 PhotoUrls = placeDetail?.PhotoUrls ?? new List<string>(),
-                AiReviewSummary = placeDetail?.AiReviewSummary,
+                AiReviewSummary = aiSummaries[i],
                 TopReviews = placeDetail?.Reviews.Select(r => new ReviewDto
                 {
                     AuthorName = r.AuthorName,
@@ -229,9 +249,7 @@ public class FindMeetPointHandler : IRequestHandler<FindMeetPointCommand, FindMe
                     Text = r.Text,
                     RelativeTime = r.RelativeTime
                 }).ToList() ?? new List<ReviewDto>()
-            };
-
-            results.Add(candidateDto);
+            });
         }
 
         return results;

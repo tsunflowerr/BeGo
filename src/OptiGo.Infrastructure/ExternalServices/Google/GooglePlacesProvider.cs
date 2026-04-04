@@ -26,7 +26,7 @@ public class GooglePlacesProvider : IPlacesProvider
 
     // Max photos/reviews để tránh billing cao
     private const int MaxPhotos = 5;
-    private const int MaxReviews = 5;
+    private const int MaxReviews = 20;
     private const int PhotoMaxWidth = 800;
 
     public GooglePlacesProvider(
@@ -55,6 +55,7 @@ public class GooglePlacesProvider : IPlacesProvider
         {
             includedTypes = new[] { primaryType },
             maxResultCount = limit > 20 ? 20 : limit,
+            languageCode = "vi", // Đảm bảo quán và Review ưu tiên tiếng Việt
             locationRestriction = new
             {
                 circle = new
@@ -119,7 +120,7 @@ public class GooglePlacesProvider : IPlacesProvider
         // Google Places API (New) yêu cầu format: places/{placeId}
         // Nếu placeId đã có prefix "places/" thì dùng luôn, không thì thêm vào
         var resourceName = placeId.StartsWith("places/") ? placeId : $"places/{placeId}";
-        var url = $"https://places.googleapis.com/v1/{resourceName}";
+        var url = $"https://places.googleapis.com/v1/{resourceName}?languageCode=vi";
 
         // FieldMask cho Place Details - chỉ lấy các field cần thiết để tối ưu billing
         // photos: Danh sách ảnh của địa điểm
@@ -145,7 +146,12 @@ public class GooglePlacesProvider : IPlacesProvider
                 return result;
             }
 
-            var detailResponse = await response.Content.ReadFromJsonAsync<GooglePlaceDetailResponse>(cancellationToken: ct);
+            var rawJson = await response.Content.ReadAsStringAsync(ct);
+            _logger.LogDebug("Raw Place Detail JSON: {Json}", rawJson);
+
+            if (string.IsNullOrWhiteSpace(rawJson)) return result;
+
+            var detailResponse = JsonSerializer.Deserialize<GooglePlaceDetailResponse>(rawJson);
             if (detailResponse == null)
             {
                 return result;
