@@ -1,4 +1,4 @@
-﻿using MediatR;
+using MediatR;
 using Microsoft.Extensions.Logging;
 using OptiGo.Application.Interfaces;
 using OptiGo.Domain.Entities;
@@ -14,15 +14,18 @@ public class SubmitVoteHandler : IRequestHandler<SubmitVoteCommand, SubmitVoteRe
 {
     private readonly ISessionRepository _sessionRepository;
     private readonly IUnitOfWork _unitOfWork;
+    private readonly ISessionNotifier _notifier;
     private readonly ILogger<SubmitVoteHandler> _logger;
 
     public SubmitVoteHandler(
         ISessionRepository sessionRepository,
         IUnitOfWork unitOfWork,
+        ISessionNotifier notifier,
         ILogger<SubmitVoteHandler> logger)
     {
         _sessionRepository = sessionRepository;
         _unitOfWork = unitOfWork;
+        _notifier = notifier;
         _logger = logger;
     }
 
@@ -63,6 +66,21 @@ public class SubmitVoteHandler : IRequestHandler<SubmitVoteCommand, SubmitVoteRe
 
             // 4. Lưu lại vào Database
             await _unitOfWork.SaveChangesAsync(cancellationToken);
+
+            // SignalR: Notify vote submitted
+            await _notifier.NotifyVoteSubmittedAsync(
+                session.Id, 
+                request.MemberId, 
+                request.VenueId, 
+                session.Votes.Count, 
+                session.Members.Count, 
+                cancellationToken);
+
+            if (isCompleted && winningVenueId != null)
+            {
+                // SignalR: Notify voting completed
+                await _notifier.NotifyVotingCompletedAsync(session.Id, winningVenueId, cancellationToken);
+            }
 
             return new SubmitVoteResult
             {

@@ -16,6 +16,7 @@ public class FindMeetPointHandler : IRequestHandler<FindMeetPointCommand, FindMe
     private readonly ITravelTimeService _travelTimeService;
     private readonly IAIService _aiService;
     private readonly IUnitOfWork _unitOfWork;
+    private readonly ISessionNotifier _notifier;
     private readonly ILogger<FindMeetPointHandler> _logger;
 
     public FindMeetPointHandler(
@@ -25,6 +26,7 @@ public class FindMeetPointHandler : IRequestHandler<FindMeetPointCommand, FindMe
         ITravelTimeService travelTimeService,
         IAIService aiService,
         IUnitOfWork unitOfWork,
+        ISessionNotifier notifier,
         ILogger<FindMeetPointHandler> logger)
     {
         _sessionRepository = sessionRepository;
@@ -33,6 +35,7 @@ public class FindMeetPointHandler : IRequestHandler<FindMeetPointCommand, FindMe
         _travelTimeService = travelTimeService;
         _aiService = aiService;
         _unitOfWork = unitOfWork;
+        _notifier = notifier;
         _logger = logger;
     }
 
@@ -53,6 +56,9 @@ public class FindMeetPointHandler : IRequestHandler<FindMeetPointCommand, FindMe
         // 2. Cập nhật state (Đang tính toán)
         session.ChangeStatus(SessionStatus.Computing);
         await _unitOfWork.SaveChangesAsync(cancellationToken);
+
+        // SignalR: Notify computing started
+        await _notifier.NotifyComputingStartedAsync(session.Id, cancellationToken);
 
         try
         {
@@ -140,6 +146,9 @@ public class FindMeetPointHandler : IRequestHandler<FindMeetPointCommand, FindMe
                 top3Scores, top3VenueEntities, filteredVenues, membersList, 
                 durationMatrix, distanceMatrix, cancellationToken);
 
+            // SignalR: Notify optimization completed
+            await _notifier.NotifyOptimizationCompletedAsync(session.Id, top3Result, cancellationToken);
+
             return new FindMeetPointResult
             {
                 IsSuccess = true,
@@ -156,10 +165,6 @@ public class FindMeetPointHandler : IRequestHandler<FindMeetPointCommand, FindMe
         }
     }
 
-    /// <summary>
-    /// Enrich Top 3 venues với thông tin chi tiết từ Google Places Detail API.
-    /// Distance đã được lấy từ Matrix API - không cần gọi thêm Directions API.
-    /// </summary>
     /// <summary>
     /// Enrich Top 3 venues với thông tin chi tiết từ Google Places Detail API.
     /// Distance đã được lấy từ Matrix API - không cần gọi thêm Directions API.

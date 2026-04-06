@@ -1,6 +1,9 @@
 using OptiGo.Infrastructure;
 using DotNetEnv;
 using Scalar.AspNetCore;
+using OptiGo.Api.Hubs;
+using OptiGo.Api.Services;
+using OptiGo.Application.Interfaces;
 
 // Đọc từ thư mục root của solution trước, nếu chạy qua dotnet run từ folder src/OptiGo.Api
 Env.Load("../../.env");
@@ -11,6 +14,10 @@ var builder = WebApplication.CreateBuilder(args);
 
 // ── Infrastructure (DB, Redis, Mapbox, Repositories) ──
 builder.Services.AddInfrastructure(builder.Configuration);
+
+// ── SignalR ──
+builder.Services.AddSignalR();
+builder.Services.AddScoped<ISessionNotifier, SignalRSessionNotifier>();
 
 // ── MediatR (Application layer CQRS) ──
 builder.Services.AddMediatR(cfg =>
@@ -50,6 +57,9 @@ if (app.Environment.IsDevelopment())
 app.UseHttpsRedirection();
 app.UseCors("AllowFrontend");
 app.MapControllers();
+
+// ── SignalR Hubs ──
+app.MapHub<SessionHub>("/hubs/session");
 
 // ── Health check endpoint ──
 app.MapGet("/api/health", () => Results.Ok(new

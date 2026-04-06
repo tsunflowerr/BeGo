@@ -16,11 +16,13 @@ public class JoinSessionHandler : IRequestHandler<JoinSessionCommand, Guid>
 {
     private readonly ISessionRepository _sessionRepository;
     private readonly IUnitOfWork _unitOfWork;
+    private readonly ISessionNotifier _notifier;
 
-    public JoinSessionHandler(ISessionRepository sessionRepository, IUnitOfWork unitOfWork)
+    public JoinSessionHandler(ISessionRepository sessionRepository, IUnitOfWork unitOfWork, ISessionNotifier notifier)
     {
         _sessionRepository = sessionRepository;
         _unitOfWork = unitOfWork;
+        _notifier = notifier;
     }
 
     public async Task<Guid> Handle(JoinSessionCommand request, CancellationToken cancellationToken)
@@ -33,6 +35,14 @@ public class JoinSessionHandler : IRequestHandler<JoinSessionCommand, Guid>
 
         session.AddMember(member);
         await _unitOfWork.SaveChangesAsync(cancellationToken);
+
+        // SignalR: Notify member joined
+        await _notifier.NotifyMemberJoinedAsync(
+            session.Id, 
+            member.Id, 
+            member.Name, 
+            session.Members.Count, 
+            cancellationToken);
 
         return member.Id;
     }
