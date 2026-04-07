@@ -62,6 +62,8 @@ public class SubmitVoteHandler : IRequestHandler<SubmitVoteCommand, SubmitVoteRe
                     .OrderByDescending(g => g.Count())
                     .First()
                     .Key;
+                
+                session.SetWinningVenue(winningVenueId);
             }
 
             // 4. Lưu lại vào Database

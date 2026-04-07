@@ -39,6 +39,10 @@ public class SessionConfiguration : IEntityTypeConfiguration<Session>
             .HasColumnName("expires_at")
             .IsRequired();
 
+        builder.Property(s => s.WinningVenueId)
+            .HasColumnName("winning_venue_id")
+            .HasMaxLength(100);
+
         // Mảng NominatedVenueIds sử dụng tính năng primitive collections của EF Core (text[])
         builder.Property(s => s.NominatedVenueIds)
             .HasColumnName("nominated_venue_ids")

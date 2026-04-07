@@ -2,12 +2,26 @@
 
 import { memo, useState, useCallback, useEffect, useRef } from "react";
 import { motion, AnimatePresence } from "framer-motion";
+import * as yup from "yup";
 
 interface CreateRoomModalProps {
   isOpen: boolean;
   onClose: () => void;
   onSubmit: (data: { hostName: string; defaultQuery: string }) => Promise<void>;
 }
+
+const schema = yup.object().shape({
+  hostName: yup
+    .string()
+    .trim()
+    .required("Vui lòng nhập tên của bạn")
+    .max(100, "Tên không được vượt quá 100 ký tự")
+    .matches(/^[\p{L}\p{N}\s\-_\.]+$/u, "Tên chỉ được chứa chữ cái, số, dấu cách, gạch ngang, gạch dưới và dấu chấm"),
+  defaultQuery: yup
+    .string()
+    .trim()
+    .max(500, "Mô tả không được vượt quá 500 ký tự"),
+});
 
 function CreateRoomModalComponent({ isOpen, onClose, onSubmit }: CreateRoomModalProps) {
   const [hostName, setHostName] = useState("");
@@ -35,18 +49,18 @@ function CreateRoomModalComponent({ isOpen, onClose, onSubmit }: CreateRoomModal
   const handleSubmit = useCallback(async (e: React.FormEvent) => {
     e.preventDefault();
     
-    if (!hostName.trim()) {
-      setError("Vui lòng nhập tên của bạn");
-      return;
-    }
-
     setIsLoading(true);
     setError(null);
 
     try {
-      await onSubmit({ hostName: hostName.trim(), defaultQuery: defaultQuery.trim() });
+      const data = await schema.validate({ hostName, defaultQuery });
+      await onSubmit({ hostName: data.hostName!, defaultQuery: data.defaultQuery || "" });
     } catch (err) {
-      setError(err instanceof Error ? err.message : "Có lỗi xảy ra, vui lòng thử lại");
+      if (err instanceof yup.ValidationError) {
+        setError(err.message);
+      } else {
+        setError(err instanceof Error ? err.message : "Có lỗi xảy ra, vui lòng thử lại");
+      }
     } finally {
       setIsLoading(false);
     }

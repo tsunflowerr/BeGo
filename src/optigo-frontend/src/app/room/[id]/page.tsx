@@ -15,6 +15,7 @@ import {
   FeatureSuggestion,
   ToastContainer,
   useToasts,
+  QueryEditor,
 } from "@/components";
 import { useSession, useGeolocation } from "@/hooks";
 import { api } from "@/lib/api";
@@ -264,9 +265,16 @@ export default function RoomPage() {
             </div>
           </div>
 
-          {/* Share link */}
-          <div className="p-4 sm:p-6 border-b border-[#e8f9fd]">
+          {/* Share link + Query Editor */}
+          <div className="p-4 sm:p-6 border-b border-[#e8f9fd] space-y-4">
             <ShareLinkSection sessionId={sessionId} />
+            <QueryEditor
+              sessionId={sessionId}
+              initialQuery={session?.queryText || ""}
+              isHost={isHost}
+              isEditable={status === SessionStatus.WaitingForMembers}
+              onQueryUpdated={refreshSession}
+            />
           </div>
 
           {/* Main content */}

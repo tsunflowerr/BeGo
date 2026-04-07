@@ -3,7 +3,11 @@ using DotNetEnv;
 using Scalar.AspNetCore;
 using OptiGo.Api.Hubs;
 using OptiGo.Api.Services;
+using OptiGo.Api.Validators;
 using OptiGo.Application.Interfaces;
+using FluentValidation;
+using FluentValidation.AspNetCore;
+using MediatR;
 
 // Đọc từ thư mục root của solution trước, nếu chạy qua dotnet run từ folder src/OptiGo.Api
 Env.Load("../../.env");
@@ -21,7 +25,14 @@ builder.Services.AddScoped<ISessionNotifier, SignalRSessionNotifier>();
 
 // ── MediatR (Application layer CQRS) ──
 builder.Services.AddMediatR(cfg =>
-    cfg.RegisterServicesFromAssembly(typeof(OptiGo.Application.Interfaces.IUnitOfWork).Assembly));
+{
+    cfg.RegisterServicesFromAssembly(typeof(OptiGo.Application.Interfaces.IUnitOfWork).Assembly);
+    cfg.AddBehavior(typeof(IPipelineBehavior<,>), typeof(OptiGo.Api.Behaviors.ValidationBehavior<,>));
+});
+
+// ── FluentValidation ──
+builder.Services.AddFluentValidationAutoValidation();
+builder.Services.AddValidatorsFromAssemblyContaining<CreateSessionCommandValidator>();
 
 // ── Controllers ──
 builder.Services.AddControllers();
@@ -47,6 +58,24 @@ builder.Services.AddCors(options =>
 
 var app = builder.Build();
 
+// ── Exception Handling Middleware ──
+app.Use(async (context, next) =>
+{
+    try
+    {
+        await next();
+    }
+    catch (FluentValidation.ValidationException ex)
+    {
+        context.Response.StatusCode = 400;
+        await context.Response.WriteAsJsonAsync(new
+        {
+            Error = "Validation Failed",
+            Details = ex.Errors.Select(e => e.ErrorMessage)
+        });
+    }
+});
+
 // ── Middleware Pipeline ──
 if (app.Environment.IsDevelopment())
 {
@@ -70,4 +99,3 @@ app.MapGet("/api/health", () => Results.Ok(new
 })).WithName("HealthCheck");
 
 app.Run();
-

@@ -2,6 +2,7 @@
 
 import { memo, useState, useCallback } from "react";
 import { motion, AnimatePresence } from "framer-motion";
+import * as yup from "yup";
 import { TransportMode, transportModeLabels, transportModeIcons } from "@/types";
 
 interface JoinRoomModalProps {
@@ -19,6 +20,19 @@ interface JoinRoomModalProps {
   locationLoading?: boolean;
 }
 
+const schema = yup.object().shape({
+  memberName: yup
+    .string()
+    .trim()
+    .required("Vui lòng nhập tên của bạn")
+    .min(2, "Tên phải có ít nhất 2 ký tự")
+    .max(50, "Tên không được vượt quá 50 ký tự")
+    .matches(/^[\p{L}\p{N}\s\-_\.]+$/u, "Tên chỉ được chứa chữ cái, số, dấu cách, gạch ngang, gạch dưới và dấu chấm"),
+  latitude: yup.number().required("Không tìm thấy vĩ độ").min(-90).max(90),
+  longitude: yup.number().required("Không tìm thấy kinh độ").min(-180).max(180),
+  transportMode: yup.mixed<TransportMode>().oneOf(Object.values(TransportMode) as TransportMode[]).required(),
+});
+
 function JoinRoomModalComponent({
   isOpen,
   sessionId,
@@ -35,11 +49,6 @@ function JoinRoomModalComponent({
 
   const handleSubmit = useCallback(async (e: React.FormEvent) => {
     e.preventDefault();
-    
-    if (!memberName.trim()) {
-      setError("Vui lòng nhập tên của bạn");
-      return;
-    }
 
     if (!initialLocation) {
       setError("Không thể lấy vị trí của bạn. Vui lòng cho phép truy cập vị trí.");
@@ -50,14 +59,25 @@ function JoinRoomModalComponent({
     setError(null);
 
     try {
-      await onJoin({
-        memberName: memberName.trim(),
+      const data = await schema.validate({
+        memberName,
         latitude: initialLocation.latitude,
         longitude: initialLocation.longitude,
         transportMode,
       });
+
+      await onJoin({
+        memberName: data.memberName!,
+        latitude: data.latitude!,
+        longitude: data.longitude!,
+        transportMode: data.transportMode as TransportMode,
+      });
     } catch (err) {
-      setError(err instanceof Error ? err.message : "Không thể tham gia phòng");
+      if (err instanceof yup.ValidationError) {
+        setError(err.message);
+      } else {
+        setError(err instanceof Error ? err.message : "Không thể tham gia phòng");
+      }
     } finally {
       setIsSubmitting(false);
     }

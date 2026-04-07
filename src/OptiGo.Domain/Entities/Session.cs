@@ -18,6 +18,7 @@ public class Session
     public string? QueryText { get; private set; }
     public DateTime CreatedAt { get; private set; }
     public DateTime ExpiresAt { get; private set; }
+    public string? WinningVenueId { get; private set; }
 
     private readonly List<Member> _members = new();
     public IReadOnlyCollection<Member> Members => _members.AsReadOnly();
@@ -109,6 +110,14 @@ public class Session
     {
         _nominatedVenueIds.Clear();
         _nominatedVenueIds.AddRange(venueIds);
+    }
+    
+    public void SetWinningVenue(string? venueId)
+    {
+        if (Status != SessionStatus.Completed)
+            throw new DomainException("Can only set winning venue when session is completed.");
+            
+        WinningVenueId = venueId;
     }
 
     public bool AllMembersVoted() => _votes.Count == _members.Count && _members.Count > 0;

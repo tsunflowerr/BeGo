@@ -65,29 +65,12 @@ export const api = {
     },
 
     get: async (sessionId: string): Promise<Session> => {
-      // TODO: Backend endpoint /api/sessions/{id} not yet implemented
-      // For now, return a minimal session structure
-      // This will be populated via SignalR events when members join
       const response = await fetch(`${API_BASE_URL}/api/sessions/${sessionId}`, {
         method: "GET",
         headers: {
           "Content-Type": "application/json",
         },
       });
-      
-      // If endpoint doesn't exist yet, return mock session
-      if (response.status === 404 || response.status === 405) {
-        return {
-          id: sessionId,
-          hostName: "",
-          status: "WaitingForMembers" as SessionStatus,
-          queryText: "",
-          createdAt: new Date().toISOString(),
-          expiresAt: new Date(Date.now() + 24 * 60 * 60 * 1000).toISOString(),
-          members: [],
-          nominatedVenueIds: [],
-        };
-      }
       
       return handleResponse<Session>(response);
     },
@@ -101,6 +84,17 @@ export const api = {
         body: JSON.stringify(data),
       });
       return handleResponse<JoinSessionResponse>(response);
+    },
+
+    updateQuery: async (sessionId: string, queryText: string): Promise<void> => {
+      const response = await fetch(`${API_BASE_URL}/api/sessions/${sessionId}/query`, {
+        method: "PUT",
+        headers: {
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify({ queryText }),
+      });
+      await handleResponse<{ message: string }>(response);
     },
   },
 
