@@ -1,132 +1,420 @@
 "use client";
 
 import { useParams } from "next/navigation";
-import { motion } from "framer-motion";
-import { Navbar, Logo } from "@/components";
-import { useCallback } from "react";
+import { motion, AnimatePresence } from "framer-motion";
+import { useCallback, useState, useEffect, useRef } from "react";
+import {
+  Navbar,
+  Logo,
+  ShareLinkSection,
+  MemberList,
+  MapView,
+  VenueCard,
+  JoinRoomModal,
+  VotingProgress,
+  FeatureSuggestion,
+  ToastContainer,
+  useToasts,
+} from "@/components";
+import { useSession, useGeolocation } from "@/hooks";
+import { api } from "@/lib/api";
+import {
+  TransportMode,
+  SessionStatus,
+} from "@/types";
 
 export default function RoomPage() {
   const params = useParams();
-  const roomId = params.id as string;
+  const sessionId = params.id as string;
 
+  // Toast notifications
+  const { toasts, removeToast, success, info, warning } = useToasts();
+  const prevMembersCount = useRef(0);
+  const prevStatus = useRef<SessionStatus | null>(null);
+
+  // Local state
+  const [memberId, setMemberId] = useState<string | null>(null);
+  const [showJoinModal, setShowJoinModal] = useState(false);
+  const [selectedVenueId, setSelectedVenueId] = useState<string | null>(null);
+  const [hasJoined, setHasJoined] = useState(false);
+
+  // Get geolocation
+  const {
+    latitude,
+    longitude,
+    error: locationError,
+    loading: locationLoading,
+  } = useGeolocation();
+
+  // Get session data
+  const {
+    session,
+    members,
+    isHost,
+    currentMember,
+    optimizationResult,
+    topVenues,
+    winningVenueId,
+    votingProgress,
+    hasVoted,
+    loading,
+    error,
+    status,
+    isComputing,
+    isVoting,
+    isCompleted,
+    isConnected,
+    refreshSession,
+    startOptimization,
+    submitVote,
+  } = useSession({ sessionId, memberId });
+
+  // Toast notifications for events
+  useEffect(() => {
+    // New member joined
+    if (members.length > prevMembersCount.current && prevMembersCount.current > 0) {
+      const newMember = members[members.length - 1];
+      if (newMember && newMember.id !== memberId) {
+        info(`${newMember.name} đã tham gia phòng`);
+      }
+    }
+    prevMembersCount.current = members.length;
+  }, [members, memberId, info]);
+
+  useEffect(() => {
+    // Status changes
+    if (prevStatus.current !== null && prevStatus.current !== status) {
+      if (status === SessionStatus.Computing) {
+        info("🔍 Hệ thống đang tính toán điểm hẹn tối ưu...");
+      } else if (status === SessionStatus.Voting) {
+        success("✨ Đã tìm được Top 3 địa điểm! Hãy bình chọn.");
+      } else if (status === SessionStatus.Completed) {
+        success("🎉 Nhóm đã chọn được điểm hẹn!");
+      }
+    }
+    prevStatus.current = status;
+  }, [status, info, success]);
+
+  // Check if user has already joined (from localStorage)
+  useEffect(() => {
+    const storedMemberId = localStorage.getItem(`room-${sessionId}-memberId`);
+    if (storedMemberId) {
+      setMemberId(storedMemberId);
+      setHasJoined(true);
+    } else {
+      // Show join modal after a short delay
+      const timer = setTimeout(() => {
+        setShowJoinModal(true);
+      }, 500);
+      return () => clearTimeout(timer);
+    }
+  }, [sessionId]);
+
+  // Handle sign out
   const handleSignOut = useCallback(() => {
-    console.log("Sign out clicked");
-  }, []);
+    localStorage.removeItem(`room-${sessionId}-memberId`);
+    setMemberId(null);
+    setHasJoined(false);
+    setShowJoinModal(true);
+  }, [sessionId]);
 
-  const handleCopyLink = useCallback(() => {
-    const link = window.location.href;
-    navigator.clipboard.writeText(link);
-  }, []);
+  // Handle join room
+  const handleJoinRoom = useCallback(async (data: {
+    memberName: string;
+    latitude: number;
+    longitude: number;
+    transportMode: TransportMode;
+  }) => {
+    const response = await api.sessions.join(sessionId, data);
+    setMemberId(response.memberId);
+    localStorage.setItem(`room-${sessionId}-memberId`, response.memberId);
+    setHasJoined(true);
+    setShowJoinModal(false);
+    success(`Chào mừng ${data.memberName}! Bạn đã tham gia phòng.`);
+    await refreshSession();
+  }, [sessionId, refreshSession, success]);
+
+  // Handle start optimization
+  const handleStartOptimization = useCallback(async () => {
+    info("🔍 Đang tìm kiếm điểm hẹn tối ưu...");
+    await startOptimization(session?.queryText || "cafe");
+  }, [startOptimization, session?.queryText, info]);
+
+  // Handle vote
+  const handleVote = useCallback(async (venueId: string) => {
+    setSelectedVenueId(venueId);
+    await submitVote(venueId);
+    success("Đã gửi bình chọn của bạn!");
+  }, [submitVote, success]);
+
+  // Get winning venue
+  const winningVenue = winningVenueId
+    ? topVenues.find((v) => v.venueId === winningVenueId)
+    : null;
+
+  // Calculate member distances to winning venue
+  const memberDistances = winningVenue
+    ? new Map(
+        winningVenue.memberRoutes.map((r) => [
+          r.memberId,
+          { time: r.estimatedTimeSeconds, distance: r.distanceMeters },
+        ])
+      )
+    : undefined;
+
+  // Render loading state
+  if (loading) {
+    return (
+      <div className="flex flex-col min-h-screen bg-white">
+        <Navbar onSignOut={handleSignOut} />
+        <main className="flex-1 flex items-center justify-center">
+          <motion.div
+            initial={{ opacity: 0 }}
+            animate={{ opacity: 1 }}
+            className="text-center"
+          >
+            <motion.div
+              animate={{ rotate: 360 }}
+              transition={{ duration: 2, repeat: Infinity, ease: "linear" }}
+              className="w-16 h-16 mx-auto border-4 border-[#e8f9fd] border-t-[#ff1e00] rounded-full mb-4"
+            />
+            <p className="text-[#1a1a2e] font-medium">Đang tải phòng...</p>
+          </motion.div>
+        </main>
+      </div>
+    );
+  }
+
+  // Render error state
+  if (error && !session) {
+    return (
+      <div className="flex flex-col min-h-screen bg-white">
+        <Navbar onSignOut={handleSignOut} />
+        <main className="flex-1 flex items-center justify-center p-4">
+          <motion.div
+            initial={{ opacity: 0, scale: 0.9 }}
+            animate={{ opacity: 1, scale: 1 }}
+            className="text-center max-w-md"
+          >
+            <div className="w-20 h-20 mx-auto mb-4 bg-red-50 rounded-full flex items-center justify-center">
+              <svg className="w-10 h-10 text-red-500" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 9v2m0 4h.01m-6.938 4h13.856c1.54 0 2.502-1.667 1.732-3L13.732 4c-.77-1.333-2.694-1.333-3.464 0L3.34 16c-.77 1.333.192 3 1.732 3z" />
+              </svg>
+            </div>
+            <h2 className="text-xl font-semibold text-[#1a1a2e] mb-2">Không tìm thấy phòng</h2>
+            <p className="text-[#6b7280] mb-4">{error}</p>
+            <a
+              href="/"
+              className="inline-flex items-center gap-2 px-6 py-3 bg-[#ff1e00] text-white rounded-xl font-medium hover:bg-[#cc1800] transition-colors"
+            >
+              <svg className="w-5 h-5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M3 12l2-2m0 0l7-7 7 7M5 10v10a1 1 0 001 1h3m10-11l2 2m-2-2v10a1 1 0 01-1 1h-3m-6 0a1 1 0 001-1v-4a1 1 0 011-1h2a1 1 0 011 1v4a1 1 0 001 1m-6 0h6" />
+              </svg>
+              Về trang chủ
+            </a>
+          </motion.div>
+        </main>
+      </div>
+    );
+  }
 
   return (
-    <div className="flex flex-col min-h-screen">
-      <Navbar onSignOut={handleSignOut} />
+    <div className="flex flex-col min-h-screen bg-gradient-to-br from-white via-white to-[#e8f9fd]/30">
+      <Navbar
+        user={currentMember ? { name: currentMember.name } : undefined}
+        onSignOut={handleSignOut}
+      />
 
-      <main className="flex-1 flex flex-col items-center justify-center p-8">
+      <main className="flex-1 flex flex-col items-center justify-center p-4 sm:p-6 lg:p-8">
         <motion.div
-          initial={{ opacity: 0, scale: 0.9 }}
+          initial={{ opacity: 0, scale: 0.95 }}
           animate={{ opacity: 1, scale: 1 }}
           transition={{ duration: 0.4 }}
-          className="w-full max-w-2xl bg-white rounded-3xl shadow-xl overflow-hidden"
+          className="w-full max-w-6xl bg-white rounded-3xl shadow-2xl overflow-hidden border border-[#e8f9fd]"
         >
           {/* Header */}
-          <div className="bg-gradient-to-r from-[#5D7B6F] to-[#A4C3A2] p-8 text-center">
-            <motion.div
-              initial={{ y: -20, opacity: 0 }}
-              animate={{ y: 0, opacity: 1 }}
-              transition={{ delay: 0.2 }}
-            >
-              <Logo size={80} className="mx-auto mb-4 drop-shadow-lg" />
-              <h1 className="text-2xl font-bold text-white mb-2">
-                Phòng đã được tạo!
-              </h1>
-              <p className="text-white/80">
-                Chia sẻ link để mời bạn bè tham gia
-              </p>
-            </motion.div>
+          <div className="bg-gradient-to-r from-[#ff1e00] to-[#ff4d33] p-6 sm:p-8">
+            <div className="flex flex-col sm:flex-row items-center justify-between gap-4">
+              <div className="flex items-center gap-4">
+                <Logo size={56} className="drop-shadow-lg" />
+                <div className="text-center sm:text-left">
+                  <h1 className="text-xl sm:text-2xl font-bold text-white">
+                    {session?.queryText || "Tìm điểm hẹn"}
+                  </h1>
+                  <p className="text-white/80 text-sm">
+                    {status === SessionStatus.WaitingForMembers && "Đang chờ thành viên"}
+                    {status === SessionStatus.Computing && "Đang tìm kiếm..."}
+                    {status === SessionStatus.Voting && "Đang bình chọn"}
+                    {status === SessionStatus.Completed && "Đã hoàn thành"}
+                  </p>
+                </div>
+              </div>
+
+              {/* Connection status */}
+              <div className="flex items-center gap-2">
+                <span
+                  className={`w-2.5 h-2.5 rounded-full ${
+                    isConnected ? "bg-[#59ce8f] animate-pulse" : "bg-gray-400"
+                  }`}
+                />
+                <span className="text-white/80 text-sm">
+                  {isConnected ? "Đã kết nối" : "Đang kết nối..."}
+                </span>
+              </div>
+            </div>
           </div>
 
-          {/* Content */}
-          <div className="p-8 space-y-6">
-            {/* Room ID */}
-            <motion.div
-              initial={{ opacity: 0, y: 20 }}
-              animate={{ opacity: 1, y: 0 }}
-              transition={{ delay: 0.3 }}
-              className="text-center"
-            >
-              <p className="text-sm text-[#5D7B6F]/60 mb-2">Mã phòng</p>
-              <p className="font-mono text-lg text-[#5D7B6F] bg-[#D7F9FA]/50 px-4 py-2 rounded-lg inline-block">
-                {roomId}
-              </p>
-            </motion.div>
+          {/* Share link */}
+          <div className="p-4 sm:p-6 border-b border-[#e8f9fd]">
+            <ShareLinkSection sessionId={sessionId} />
+          </div>
 
-            {/* Share Link */}
-            <motion.div
-              initial={{ opacity: 0, y: 20 }}
-              animate={{ opacity: 1, y: 0 }}
-              transition={{ delay: 0.4 }}
-              className="space-y-3"
-            >
-              <p className="text-sm text-[#5D7B6F]/60 text-center">Link chia sẻ</p>
-              <div className="flex gap-2">
-                <input
-                  type="text"
-                  readOnly
-                  value={typeof window !== "undefined" ? window.location.href : ""}
-                  className="flex-1 px-4 py-3 rounded-xl border-2 border-[#B0D4B8] bg-[#D7F9FA]/30 text-[#5D7B6F] text-sm truncate"
+          {/* Main content */}
+          <div className="p-4 sm:p-6">
+            <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
+              {/* Left side - Map */}
+              <div className="lg:col-span-2">
+                <div className="h-[400px] lg:h-[500px]">
+                  <MapView
+                    members={members}
+                    geometricMedian={optimizationResult?.geometricMedian}
+                    venues={isCompleted && winningVenue ? [winningVenue] : topVenues}
+                    winningVenueId={winningVenueId || undefined}
+                    isLoading={isComputing}
+                  />
+                </div>
+              </div>
+
+              {/* Right side - Members */}
+              <div className="lg:col-span-1">
+                <MemberList
+                  members={members}
+                  hostMemberId={session?.members?.[0]?.id}
+                  currentMemberId={memberId || undefined}
+                  winningVenueId={winningVenueId || undefined}
+                  showDistances={isCompleted}
+                  memberDistances={memberDistances}
                 />
-                <motion.button
-                  onClick={handleCopyLink}
-                  whileHover={{ scale: 1.05 }}
-                  whileTap={{ scale: 0.95 }}
-                  className="px-4 py-3 rounded-xl bg-[#5D7B6F] text-white font-medium hover:bg-[#5D7B6F]/90 transition-colors flex items-center gap-2"
+
+                {/* Start button (for host only, in waiting state) */}
+                {status === SessionStatus.WaitingForMembers && isHost && members.length > 0 && (
+                  <motion.button
+                    onClick={handleStartOptimization}
+                    whileHover={{ scale: 1.02 }}
+                    whileTap={{ scale: 0.98 }}
+                    className="w-full mt-4 py-3.5 rounded-xl font-semibold text-white bg-gradient-to-r from-[#ff1e00] to-[#ff4d33] hover:from-[#cc1800] hover:to-[#ff1e00] transition-all shadow-lg shadow-[#ff1e00]/30 flex items-center justify-center gap-2"
+                  >
+                    <svg className="w-5 h-5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M21 21l-6-6m2-5a7 7 0 11-14 0 7 7 0 0114 0z" />
+                    </svg>
+                    <span>Bắt đầu tìm kiếm</span>
+                  </motion.button>
+                )}
+
+                {/* Waiting message (for non-host) */}
+                {status === SessionStatus.WaitingForMembers && !isHost && hasJoined && (
+                  <div className="mt-4 p-4 bg-[#e8f9fd] rounded-xl text-center">
+                    <p className="text-sm text-[#6b7280]">
+                      Đang chờ chủ phòng bắt đầu tìm kiếm...
+                    </p>
+                  </div>
+                )}
+              </div>
+            </div>
+
+            {/* Voting section */}
+            <AnimatePresence>
+              {isVoting && topVenues.length > 0 && (
+                <motion.div
+                  initial={{ opacity: 0, y: 20 }}
+                  animate={{ opacity: 1, y: 0 }}
+                  exit={{ opacity: 0, y: -20 }}
+                  className="mt-6"
                 >
-                  <svg className="w-5 h-5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M8 16H6a2 2 0 01-2-2V6a2 2 0 012-2h8a2 2 0 012 2v2m-6 12h8a2 2 0 002-2v-8a2 2 0 00-2-2h-8a2 2 0 00-2 2v8a2 2 0 002 2z" />
-                  </svg>
-                  <span className="hidden sm:inline">Sao chép</span>
-                </motion.button>
-              </div>
-            </motion.div>
+                  <div className="flex flex-col sm:flex-row items-start sm:items-center justify-between gap-4 mb-4">
+                    <div>
+                      <h2 className="text-xl font-bold text-[#1a1a2e]">
+                        Top 3 địa điểm tối ưu
+                      </h2>
+                      <p className="text-[#6b7280] text-sm">
+                        Bình chọn địa điểm bạn muốn đến
+                      </p>
+                    </div>
+                    <VotingProgress
+                      totalVotes={votingProgress.voted}
+                      totalMembers={votingProgress.total}
+                      hasVoted={hasVoted}
+                    />
+                  </div>
 
-            {/* Status */}
-            <motion.div
-              initial={{ opacity: 0, y: 20 }}
-              animate={{ opacity: 1, y: 0 }}
-              transition={{ delay: 0.5 }}
-              className="bg-[#EAE7D6]/50 rounded-xl p-6 text-center"
-            >
-              <div className="flex items-center justify-center gap-2 mb-3">
-                <span className="w-3 h-3 bg-green-500 rounded-full animate-pulse" />
-                <span className="text-[#5D7B6F] font-medium">Đang chờ thành viên</span>
-              </div>
-              <p className="text-sm text-[#5D7B6F]/60">
-                Khi các thành viên tham gia, họ sẽ xuất hiện ở đây. <br />
-                Bạn có thể bắt đầu tìm điểm hẹn khi đủ người.
-              </p>
-            </motion.div>
+                  <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+                    {topVenues.map((venue, index) => (
+                      <VenueCard
+                        key={venue.venueId}
+                        venue={venue}
+                        rank={(index + 1) as 1 | 2 | 3}
+                        isSelected={selectedVenueId === venue.venueId || hasVoted && venue.venueId === selectedVenueId}
+                        canVote={!hasVoted}
+                        currentMemberId={memberId || undefined}
+                        onVote={handleVote}
+                      />
+                    ))}
+                  </div>
+                </motion.div>
+              )}
+            </AnimatePresence>
 
-            {/* Members placeholder */}
-            <motion.div
-              initial={{ opacity: 0, y: 20 }}
-              animate={{ opacity: 1, y: 0 }}
-              transition={{ delay: 0.6 }}
-              className="space-y-3"
-            >
-              <p className="text-sm font-medium text-[#5D7B6F]">Thành viên (0)</p>
-              <div className="border-2 border-dashed border-[#B0D4B8]/50 rounded-xl p-8 text-center">
-                <svg className="w-12 h-12 mx-auto text-[#B0D4B8]/50 mb-3" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.5} d="M17 20h5v-2a3 3 0 00-5.356-1.857M17 20H7m10 0v-2c0-.656-.126-1.283-.356-1.857M7 20H2v-2a3 3 0 015.356-1.857M7 20v-2c0-.656.126-1.283.356-1.857m0 0a5.002 5.002 0 019.288 0M15 7a3 3 0 11-6 0 3 3 0 016 0zm6 3a2 2 0 11-4 0 2 2 0 014 0zM7 10a2 2 0 11-4 0 2 2 0 014 0z" />
-                </svg>
-                <p className="text-[#5D7B6F]/50 text-sm">
-                  Chưa có thành viên nào tham gia
-                </p>
-              </div>
-            </motion.div>
+            {/* Completed section */}
+            <AnimatePresence>
+              {isCompleted && winningVenue && (
+                <motion.div
+                  initial={{ opacity: 0, y: 20 }}
+                  animate={{ opacity: 1, y: 0 }}
+                  className="mt-6"
+                >
+                  <div className="text-center mb-6">
+                    <motion.div
+                      initial={{ scale: 0 }}
+                      animate={{ scale: 1 }}
+                      transition={{ type: "spring", damping: 10 }}
+                      className="inline-flex items-center gap-2 px-6 py-3 bg-[#59ce8f] text-white rounded-full font-semibold shadow-lg shadow-[#59ce8f]/30"
+                    >
+                      <span className="text-xl">🎉</span>
+                      <span>Nhóm đã chọn được điểm hẹn!</span>
+                    </motion.div>
+                  </div>
+
+                  <div className="max-w-lg mx-auto">
+                    <VenueCard
+                      venue={winningVenue}
+                      rank={1}
+                      isWinner
+                      currentMemberId={memberId || undefined}
+                    />
+                  </div>
+
+                  {/* Feature suggestions */}
+                  <FeatureSuggestion />
+                </motion.div>
+              )}
+            </AnimatePresence>
           </div>
         </motion.div>
       </main>
+
+      {/* Toast notifications */}
+      <ToastContainer toasts={toasts} onRemove={removeToast} />
+
+      {/* Join Room Modal */}
+      <JoinRoomModal
+        isOpen={showJoinModal && !hasJoined}
+        sessionId={sessionId}
+        onClose={() => setShowJoinModal(false)}
+        onJoin={handleJoinRoom}
+        initialLocation={latitude && longitude ? { latitude, longitude } : null}
+        locationError={locationError}
+        locationLoading={locationLoading}
+      />
     </div>
   );
 }

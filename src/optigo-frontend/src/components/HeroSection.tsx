@@ -64,16 +64,16 @@ function HeroSectionComponent() {
           <div className="relative">
             <Logo size={160} className="drop-shadow-2xl" />
             
-            {/* Animated rings */}
+            {/* Animated rings - Orange theme */}
             <motion.div
               animate={{ scale: [1, 1.4, 1], opacity: [0.5, 0, 0.5] }}
               transition={{ duration: 2, repeat: Infinity }}
-              className="absolute inset-0 border-2 border-[#A4C3A2] rounded-full"
+              className="absolute inset-0 border-2 border-[#ff1e00]/50 rounded-full"
             />
             <motion.div
               animate={{ scale: [1, 1.6, 1], opacity: [0.3, 0, 0.3] }}
               transition={{ duration: 2, repeat: Infinity, delay: 0.5 }}
-              className="absolute inset-0 border border-[#B0D4B8] rounded-full"
+              className="absolute inset-0 border border-[#59ce8f]/50 rounded-full"
             />
           </div>
         </motion.div>
@@ -85,7 +85,7 @@ function HeroSectionComponent() {
           initial={{ opacity: 0, y: 20 }}
           animate={{ opacity: 1, y: 0 }}
           transition={{ delay: 0.2 }}
-          className="text-3xl lg:text-4xl font-bold text-[#5D7B6F] mb-4"
+          className="text-3xl lg:text-4xl font-bold text-[#1a1a2e] mb-4"
         >
           Gặp nhau dễ dàng hơn bao giờ hết
         </motion.h1>
@@ -94,7 +94,7 @@ function HeroSectionComponent() {
           initial={{ opacity: 0, y: 20 }}
           animate={{ opacity: 1, y: 0 }}
           transition={{ delay: 0.3 }}
-          className="text-lg text-[#5D7B6F]/70 mb-8 max-w-lg mx-auto lg:mx-0"
+          className="text-lg text-[#6b7280] mb-8 max-w-lg mx-auto lg:mx-0"
         >
           OptiGo giúp nhóm của bạn tìm điểm hẹn tối ưu, lên kế hoạch di chuyển 
           và xây dựng lịch trình hoàn hảo chỉ với vài thao tác đơn giản.
@@ -113,9 +113,9 @@ function HeroSectionComponent() {
               initial={{ opacity: 0, x: -20 }}
               animate={{ opacity: 1, x: 0 }}
               transition={{ delay: 0.4 + index * 0.1 }}
-              className="flex items-center gap-3 text-[#5D7B6F]"
+              className="flex items-center gap-3 text-[#1a1a2e]"
             >
-              <span className="flex-shrink-0 w-8 h-8 bg-[#B0D4B8]/30 rounded-lg flex items-center justify-center text-[#5D7B6F]">
+              <span className="flex-shrink-0 w-8 h-8 bg-[#e8f9fd] rounded-lg flex items-center justify-center text-[#ff1e00]">
                 {feature.icon}
               </span>
               <span className="text-sm lg:text-base">{feature.text}</span>

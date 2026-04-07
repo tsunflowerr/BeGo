@@ -38,8 +38,8 @@ function PhaseButtonComponent({
         border-2 overflow-hidden group
         ${
           isDisabled
-            ? "bg-[#EAE7D6]/50 border-[#B0D4B8]/30 cursor-not-allowed"
-            : "bg-white/90 border-[#B0D4B8] hover:border-[#5D7B6F] hover:shadow-lg hover:shadow-[#B0D4B8]/30 cursor-pointer"
+            ? "bg-gray-50 border-gray-200 cursor-not-allowed"
+            : "bg-white border-[#e8f9fd] hover:border-[#ff1e00] hover:shadow-lg hover:shadow-[#ff1e00]/10 cursor-pointer"
         }
       `}
     >
@@ -50,8 +50,8 @@ function PhaseButtonComponent({
           text-sm font-bold transition-colors duration-300
           ${
             isDisabled
-              ? "bg-[#B0D4B8]/30 text-[#5D7B6F]/50"
-              : "bg-[#5D7B6F] text-white group-hover:bg-[#A4C3A2]"
+              ? "bg-gray-200 text-gray-400"
+              : "bg-gradient-to-br from-[#ff1e00] to-[#ff4d33] text-white group-hover:from-[#59ce8f] group-hover:to-[#7dd9a7]"
           }
         `}
       >
@@ -65,8 +65,8 @@ function PhaseButtonComponent({
           transition-all duration-300
           ${
             isDisabled
-              ? "bg-[#B0D4B8]/20 text-[#5D7B6F]/40"
-              : "bg-[#D7F9FA] text-[#5D7B6F] group-hover:bg-[#B0D4B8] group-hover:text-white"
+              ? "bg-gray-100 text-gray-400"
+              : "bg-[#e8f9fd] text-[#ff1e00] group-hover:bg-[#ff1e00] group-hover:text-white"
           }
         `}
       >
@@ -77,7 +77,7 @@ function PhaseButtonComponent({
       <h3
         className={`
           text-lg font-semibold mb-1 transition-colors duration-300
-          ${isDisabled ? "text-[#5D7B6F]/50" : "text-[#5D7B6F]"}
+          ${isDisabled ? "text-gray-400" : "text-[#1a1a2e]"}
         `}
       >
         {title}
@@ -87,7 +87,7 @@ function PhaseButtonComponent({
       <p
         className={`
           text-sm transition-colors duration-300
-          ${isDisabled ? "text-[#5D7B6F]/40" : "text-[#5D7B6F]/70"}
+          ${isDisabled ? "text-gray-400" : "text-[#6b7280]"}
         `}
       >
         {description}
@@ -95,14 +95,14 @@ function PhaseButtonComponent({
 
       {/* Coming Soon badge */}
       {comingSoon && (
-        <span className="absolute bottom-3 right-3 px-2 py-1 text-xs font-medium bg-[#B0D4B8]/30 text-[#5D7B6F]/60 rounded-full">
+        <span className="absolute bottom-3 right-3 px-2 py-1 text-xs font-medium bg-[#e8f9fd] text-[#6b7280] rounded-full">
           Sắp ra mắt
         </span>
       )}
 
       {/* Hover gradient overlay */}
       {!isDisabled && (
-        <div className="absolute inset-0 bg-gradient-to-br from-[#D7F9FA]/0 to-[#B0D4B8]/0 group-hover:from-[#D7F9FA]/10 group-hover:to-[#B0D4B8]/20 transition-all duration-300 pointer-events-none" />
+        <div className="absolute inset-0 bg-gradient-to-br from-transparent to-[#ff1e00]/0 group-hover:to-[#ff1e00]/5 transition-all duration-300 pointer-events-none" />
       )}
     </motion.button>
   );

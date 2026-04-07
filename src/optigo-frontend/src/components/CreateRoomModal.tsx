@@ -77,7 +77,7 @@ function CreateRoomModalComponent({ isOpen, onClose, onSubmit }: CreateRoomModal
             className="w-full max-w-md bg-white rounded-2xl shadow-2xl overflow-hidden"
           >
             {/* Header */}
-            <div className="bg-gradient-to-r from-[#5D7B6F] to-[#A4C3A2] px-6 py-4">
+            <div className="bg-gradient-to-r from-[#ff1e00] to-[#ff4d33] px-6 py-4">
               <div className="flex items-center justify-between">
                 <div>
                   <h2 className="text-xl font-semibold text-white">Tạo phòng mới</h2>
@@ -99,8 +99,8 @@ function CreateRoomModalComponent({ isOpen, onClose, onSubmit }: CreateRoomModal
             <form onSubmit={handleSubmit} className="p-6 space-y-5">
               {/* Host Name */}
               <div>
-                <label htmlFor="hostName" className="block text-sm font-medium text-[#5D7B6F] mb-2">
-                  Tên của bạn <span className="text-red-500">*</span>
+                <label htmlFor="hostName" className="block text-sm font-medium text-[#1a1a2e] mb-2">
+                  Tên của bạn <span className="text-[#ff1e00]">*</span>
                 </label>
                 <input
                   ref={inputRef}
@@ -110,14 +110,14 @@ function CreateRoomModalComponent({ isOpen, onClose, onSubmit }: CreateRoomModal
                   onChange={(e) => setHostName(e.target.value)}
                   placeholder="Nhập tên để bạn bè nhận ra bạn"
                   disabled={isLoading}
-                  className="w-full px-4 py-3 rounded-xl border-2 border-[#B0D4B8] bg-[#D7F9FA]/30 text-[#5D7B6F] placeholder:text-[#5D7B6F]/40 focus:border-[#5D7B6F] focus:outline-none focus:ring-2 focus:ring-[#5D7B6F]/20 transition-all disabled:opacity-50"
+                  className="w-full px-4 py-3 rounded-xl border-2 border-[#e8f9fd] bg-[#e8f9fd]/30 text-[#1a1a2e] placeholder:text-[#6b7280] focus:border-[#ff1e00] focus:outline-none focus:ring-2 focus:ring-[#ff1e00]/20 transition-all disabled:opacity-50"
                 />
               </div>
 
               {/* Default Query */}
               <div>
-                <label htmlFor="defaultQuery" className="block text-sm font-medium text-[#5D7B6F] mb-2">
-                  Mô tả nơi muốn đến <span className="text-[#5D7B6F]/50">(tùy chọn)</span>
+                <label htmlFor="defaultQuery" className="block text-sm font-medium text-[#1a1a2e] mb-2">
+                  Mô tả nơi muốn đến <span className="text-[#6b7280]">(tùy chọn)</span>
                 </label>
                 <textarea
                   id="defaultQuery"
@@ -126,9 +126,9 @@ function CreateRoomModalComponent({ isOpen, onClose, onSubmit }: CreateRoomModal
                   placeholder="Ví dụ: quán cà phê yên tĩnh có wifi, giá sinh viên..."
                   rows={3}
                   disabled={isLoading}
-                  className="w-full px-4 py-3 rounded-xl border-2 border-[#B0D4B8] bg-[#D7F9FA]/30 text-[#5D7B6F] placeholder:text-[#5D7B6F]/40 focus:border-[#5D7B6F] focus:outline-none focus:ring-2 focus:ring-[#5D7B6F]/20 transition-all resize-none disabled:opacity-50"
+                  className="w-full px-4 py-3 rounded-xl border-2 border-[#e8f9fd] bg-[#e8f9fd]/30 text-[#1a1a2e] placeholder:text-[#6b7280] focus:border-[#ff1e00] focus:outline-none focus:ring-2 focus:ring-[#ff1e00]/20 transition-all resize-none disabled:opacity-50"
                 />
-                <p className="mt-1.5 text-xs text-[#5D7B6F]/60">
+                <p className="mt-1.5 text-xs text-[#6b7280]">
                   AI sẽ giúp tìm địa điểm phù hợp dựa trên mô tả của bạn
                 </p>
               </div>
@@ -153,7 +153,7 @@ function CreateRoomModalComponent({ isOpen, onClose, onSubmit }: CreateRoomModal
                 disabled={isLoading}
                 whileHover={isLoading ? {} : { scale: 1.02 }}
                 whileTap={isLoading ? {} : { scale: 0.98 }}
-                className="w-full py-3.5 rounded-xl font-semibold text-white bg-gradient-to-r from-[#5D7B6F] to-[#A4C3A2] hover:from-[#5D7B6F]/90 hover:to-[#A4C3A2]/90 transition-all shadow-lg shadow-[#5D7B6F]/30 disabled:opacity-70 disabled:cursor-not-allowed flex items-center justify-center gap-2"
+                className="w-full py-3.5 rounded-xl font-semibold text-white bg-gradient-to-r from-[#ff1e00] to-[#ff4d33] hover:from-[#cc1800] hover:to-[#ff1e00] transition-all shadow-lg shadow-[#ff1e00]/30 disabled:opacity-70 disabled:cursor-not-allowed flex items-center justify-center gap-2"
               >
                 {isLoading ? (
                   <>

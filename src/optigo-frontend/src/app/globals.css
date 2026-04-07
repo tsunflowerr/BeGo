@@ -1,24 +1,33 @@
 @import "tailwindcss";
 
 :root {
-  --color-cyan-light: #D7F9FA;
-  --color-cream: #EAE7D6;
-  --color-green-soft: #B0D4B8;
-  --color-green-dark: #5D7B6F;
-  --color-green-medium: #A4C3A2;
+  /* New bright theme colors */
+  --color-primary: #ff1e00;        /* Bright orange */
+  --color-primary-light: #ff4d33;  /* Lighter orange */
+  --color-primary-dark: #cc1800;   /* Darker orange */
+  --color-secondary: #e8f9fd;      /* Light blue */
+  --color-secondary-dark: #c5eef5; /* Darker light blue */
+  --color-accent: #59ce8f;         /* Green */
+  --color-accent-light: #7dd9a7;   /* Lighter green */
+  --color-accent-dark: #45a572;    /* Darker green */
   
-  --background: #D7F9FA;
-  --foreground: #5D7B6F;
+  --background: #ffffff;
+  --foreground: #1a1a2e;           /* Dark text for contrast */
+  --muted: #6b7280;                /* Gray for secondary text */
 }
 
 @theme inline {
   --color-background: var(--background);
   --color-foreground: var(--foreground);
-  --color-cyan-light: #D7F9FA;
-  --color-cream: #EAE7D6;
-  --color-green-soft: #B0D4B8;
-  --color-green-dark: #5D7B6F;
-  --color-green-medium: #A4C3A2;
+  --color-primary: #ff1e00;
+  --color-primary-light: #ff4d33;
+  --color-primary-dark: #cc1800;
+  --color-secondary: #e8f9fd;
+  --color-secondary-dark: #c5eef5;
+  --color-accent: #59ce8f;
+  --color-accent-light: #7dd9a7;
+  --color-accent-dark: #45a572;
+  --color-muted: #6b7280;
   --font-sans: var(--font-geist-sans);
   --font-mono: var(--font-geist-mono);
 }
@@ -35,14 +44,25 @@ body {
 }
 
 ::-webkit-scrollbar-track {
-  background: var(--color-cream);
+  background: var(--color-secondary);
 }
 
 ::-webkit-scrollbar-thumb {
-  background: var(--color-green-medium);
+  background: var(--color-accent);
   border-radius: 4px;
 }
 
 ::-webkit-scrollbar-thumb:hover {
-  background: var(--color-green-dark);
+  background: var(--color-accent-dark);
+}
+
+/* Smooth scroll */
+html {
+  scroll-behavior: smooth;
+}
+
+/* Selection highlight */
+::selection {
+  background: var(--color-primary);
+  color: white;
 }
