@@ -62,32 +62,75 @@ public class MapboxTravelTimeService : ITravelTimeService
         TransportMode mode,
         CancellationToken ct = default)
     {
+        if (origins.Count == 0 || destinations.Count == 0)
+        {
+            return new TravelMatrixResult
+            {
+                Durations = new double[origins.Count, destinations.Count],
+                Distances = new double[origins.Count, destinations.Count]
+            };
+        }
+
         var profile = MapboxTransportModeMapper.ToMapboxProfile(mode);
         var adjustmentFactor = MapboxTransportModeMapper.GetAdjustmentFactor(mode);
 
-        // Format: lng1,lat1;lng2,lat2;...
-        // Mapbox expects coordinates in lon,lat order (not lat,lon!)
-        var allCoords = origins.Concat(destinations).ToList();
+        // Convert List<List<double?>> thành double[,] matrices
+        var durations = new double[origins.Count, destinations.Count];
+        var distances = new double[origins.Count, destinations.Count];
 
-        if (allCoords.Count > MaxCoordinatesPerRequest)
+        var maxOriginsPerBatch = Math.Min(origins.Count, MaxCoordinatesPerRequest - 1);
+        for (int originStart = 0; originStart < origins.Count; originStart += maxOriginsPerBatch)
         {
-            _logger.LogWarning(
-                "Mapbox Matrix API limit: {Count} coordinates exceeds max {Max}. Truncating.",
-                allCoords.Count, MaxCoordinatesPerRequest);
-            allCoords = allCoords.Take(MaxCoordinatesPerRequest).ToList();
+            var originBatch = origins.Skip(originStart).Take(maxOriginsPerBatch).ToList();
+            var maxDestinationsPerBatch = MaxCoordinatesPerRequest - originBatch.Count;
+
+            if (maxDestinationsPerBatch <= 0)
+            {
+                throw new InvalidOperationException("Mapbox batching failed because origin batch consumed all available coordinate slots.");
+            }
+
+            for (int destinationStart = 0; destinationStart < destinations.Count; destinationStart += maxDestinationsPerBatch)
+            {
+                var destinationBatch = destinations.Skip(destinationStart).Take(maxDestinationsPerBatch).ToList();
+                var partialResult = await GetTravelMatrixChunkAsync(profile, originBatch, destinationBatch, ct);
+
+                for (int originIndex = 0; originIndex < originBatch.Count; originIndex++)
+                {
+                    for (int destinationIndex = 0; destinationIndex < destinationBatch.Count; destinationIndex++)
+                    {
+                        var globalOriginIndex = originStart + originIndex;
+                        var globalDestinationIndex = destinationStart + destinationIndex;
+
+                        durations[globalOriginIndex, globalDestinationIndex] =
+                            partialResult.Durations[originIndex, destinationIndex] * adjustmentFactor;
+
+                        distances[globalOriginIndex, globalDestinationIndex] =
+                            partialResult.Distances[originIndex, destinationIndex];
+                    }
+                }
+            }
         }
 
+        return new TravelMatrixResult
+        {
+            Durations = durations,
+            Distances = distances
+        };
+    }
+
+    private async Task<TravelMatrixResult> GetTravelMatrixChunkAsync(
+        string profile,
+        IReadOnlyList<Coordinate> origins,
+        IReadOnlyList<Coordinate> destinations,
+        CancellationToken ct)
+    {
+        var allCoords = origins.Concat(destinations).ToList();
         var coordinatesStr = string.Join(";",
             allCoords.Select(c => $"{c.Longitude:F6},{c.Latitude:F6}"));
 
-        var maxPossibleCoords = Math.Min(allCoords.Count, MaxCoordinatesPerRequest);
-        var sourceCount = Math.Min(origins.Count, maxPossibleCoords);
-        var destCount = Math.Min(destinations.Count, maxPossibleCoords - sourceCount);
+        var sourceIndices = string.Join(";", Enumerable.Range(0, origins.Count));
+        var destIndices = string.Join(";", Enumerable.Range(origins.Count, destinations.Count));
 
-        var sourceIndices = string.Join(";", Enumerable.Range(0, sourceCount));
-        var destIndices = string.Join(";", Enumerable.Range(sourceCount, destCount));
-
-        // annotations=duration,distance để lấy cả 2 trong 1 request
         var url = $"{_options.BaseUrl}/{profile}/{coordinatesStr}" +
                   $"?sources={sourceIndices}" +
                   $"&destinations={destIndices}" +
@@ -95,21 +138,18 @@ public class MapboxTravelTimeService : ITravelTimeService
                   $"&access_token={_options.ApiKey}";
 
         _logger.LogInformation(
-            "Calling Mapbox Matrix API: profile={Profile}, origins={Origins}, destinations={Destinations}",
+            "Calling Mapbox Matrix API chunk: profile={Profile}, origins={Origins}, destinations={Destinations}",
             profile, origins.Count, destinations.Count);
 
         var response = await _httpClient.GetAsync(url, ct);
         response.EnsureSuccessStatusCode();
 
-        var result = await response.Content.ReadFromJsonAsync<MapboxMatrixResponse>(
-            cancellationToken: ct);
-
+        var result = await response.Content.ReadFromJsonAsync<MapboxMatrixResponse>(cancellationToken: ct);
         if (result?.Durations is null)
         {
             throw new InvalidOperationException("Mapbox Matrix API returned null durations.");
         }
 
-        // Convert List<List<double?>> thành double[,] matrices
         var durations = new double[origins.Count, destinations.Count];
         var distances = new double[origins.Count, destinations.Count];
 
@@ -117,26 +157,21 @@ public class MapboxTravelTimeService : ITravelTimeService
         {
             for (int j = 0; j < destinations.Count; j++)
             {
-                if (i >= sourceCount || j >= destCount || 
-                    i >= result.Durations.Count || j >= result.Durations[i].Count)
+                if (i >= result.Durations.Count || j >= result.Durations[i].Count)
                 {
-                    durations[i, j] = 999999 * adjustmentFactor;
+                    durations[i, j] = 999999;
                     distances[i, j] = 999999;
                     continue;
                 }
 
-                var duration = result.Durations[i][j];
-                durations[i, j] = (duration ?? 999999.0) * adjustmentFactor;
+                durations[i, j] = result.Durations[i][j] ?? 999999.0;
 
-                // Distance nếu có
                 if (result.Distances != null && i < result.Distances.Count && j < result.Distances[i].Count)
                 {
-                    var distance = result.Distances[i][j];
-                    distances[i, j] = distance ?? 999999;
+                    distances[i, j] = result.Distances[i][j] ?? 999999;
                 }
                 else
                 {
-                    // Fallback: tính khoảng cách chim bay nếu API không trả về distance
                     distances[i, j] = origins[i].DistanceTo(destinations[j]);
                 }
             }

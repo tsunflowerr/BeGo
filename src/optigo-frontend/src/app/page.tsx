@@ -3,7 +3,9 @@
 import { useState, useCallback } from "react";
 import { useRouter } from "next/navigation";
 import { Navbar, HeroSection, PhaseButton, CreateRoomModal } from "@/components";
+import { useGeolocation } from "@/hooks";
 import { api } from "@/lib/api";
+import { TransportMode } from "@/types";
 
 // Phase icons
 const LocationIcon = () => (
@@ -28,6 +30,13 @@ const CalendarIcon = () => (
 export default function Home() {
   const router = useRouter();
   const [isModalOpen, setIsModalOpen] = useState(false);
+  const {
+    latitude,
+    longitude,
+    error: locationError,
+    loading: locationLoading,
+    refresh: refreshLocation,
+  } = useGeolocation({ enabled: isModalOpen });
 
   const handleOpenModal = useCallback(() => {
     setIsModalOpen(true);
@@ -37,12 +46,22 @@ export default function Home() {
     setIsModalOpen(false);
   }, []);
 
-  const handleCreateRoom = useCallback(async (data: { hostName: string; defaultQuery: string }) => {
+  const handleCreateRoom = useCallback(async (data: {
+    hostName: string;
+    defaultQuery: string;
+    latitude: number;
+    longitude: number;
+    transportMode: TransportMode;
+  }) => {
     const response = await api.sessions.create({
       hostName: data.hostName,
+      latitude: data.latitude,
+      longitude: data.longitude,
+      transportMode: data.transportMode,
       defaultQuery: data.defaultQuery,
     });
-    
+
+    localStorage.setItem(`room-${response.sessionId}-memberId`, response.hostMemberId);
     router.push(`/room/${response.sessionId}`);
   }, [router]);
 
@@ -94,6 +113,10 @@ export default function Home() {
         isOpen={isModalOpen}
         onClose={handleCloseModal}
         onSubmit={handleCreateRoom}
+        initialLocation={latitude && longitude ? { latitude, longitude } : null}
+        locationError={locationError}
+        locationLoading={locationLoading}
+        onRequestLocation={refreshLocation}
       />
     </div>
   );

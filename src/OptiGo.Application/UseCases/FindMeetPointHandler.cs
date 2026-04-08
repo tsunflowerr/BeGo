@@ -10,6 +10,11 @@ namespace OptiGo.Application.UseCases;
 
 public class FindMeetPointHandler : IRequestHandler<FindMeetPointCommand, FindMeetPointResult>
 {
+    private const double InitialVenueSearchRadiusMeters = 500;
+    private const int DesiredNearbyVenueCount = 50;
+    private const int FilteredVenueCount = 25;
+    private const int FinalVenueCount = 3;
+
     private readonly ISessionRepository _sessionRepository;
     private readonly IVenueRepository _venueRepository;
     private readonly IPlacesProvider _placesProvider;
@@ -78,21 +83,30 @@ public class FindMeetPointHandler : IRequestHandler<FindMeetPointCommand, FindMe
             var category = await _aiService.ResolveCategoryAsync(queryText, cancellationToken);
             _logger.LogInformation("AI resolved query '{Query}' → category '{Category}'", queryText, category);
 
-            // 5. Tìm kiếm các Venues tiềm năng dùng Places Provider trong 3km
+            // 5. Tìm kiếm pool venue đủ rộng cho bước pre-filter.
+            // Provider sẽ tự mở rộng bán kính và gộp kết quả để tiến tới ~50 candidates.
             _logger.LogInformation("Searching venues for category '{Category}' at {Lat},{Lng}", category, geometricMedian.Latitude, geometricMedian.Longitude);
             var rawVenues = await _placesProvider.SearchNearbyAsync(
-                geometricMedian.Latitude, geometricMedian.Longitude, category, radiusMeters: 3000, limit: 50, cancellationToken);
+                geometricMedian.Latitude,
+                geometricMedian.Longitude,
+                category,
+                radiusMeters: InitialVenueSearchRadiusMeters,
+                limit: DesiredNearbyVenueCount,
+                cancellationToken);
 
             if (rawVenues.Count == 0)
             {
                 throw new InvalidOperationException("No venues found around the median point.");
             }
 
-            // 5. Pre-filter (Loại bỏ các quán mạn ngoài viền bằng Haversine, giữ lại Top 25 để tránh sập Matrix API)
-            var filteredVenues = CandidateFilter.FilterTopCandidates(session.Members.ToList(), rawVenues, topN: 25);
+            // 6. Pre-filter (Loại bỏ venue quá xa, giữ lại một tập vừa đủ để gọi Matrix API hiệu quả)
+            var filteredVenues = CandidateFilter.FilterTopCandidates(
+                session.Members.ToList(),
+                rawVenues,
+                topN: FilteredVenueCount);
             var venueLocations = filteredVenues.Select(v => v.GetLocation()).ToList();
 
-            // 6. Tính Travel Time + Distance Matrix qua external API (Mapbox/Google)
+            // 7. Tính Travel Time + Distance Matrix qua external API (Mapbox/Google)
             // Chia cụm (Batching) theo Transport Mode của từng Member để tránh sai lệch thời gian di chuyển
             var membersList = session.Members.ToList();
             var durationMatrix = new double[membersList.Count, venueLocations.Count];
@@ -123,24 +137,24 @@ public class FindMeetPointHandler : IRequestHandler<FindMeetPointCommand, FindMe
                 }
             }
 
-            // 7. Scoring (Min-Max Normalization đa mục tiêu)
+            // 8. Scoring (Min-Max Normalization đa mục tiêu)
             var currentWeights = ScoringWeights.Default; // Có thể tải từ DB theo cài đặt Session
             var topScoredVenues = ScoringEngine.CalculateScores(filteredVenues, durationMatrix, currentWeights, membersList.Count);
 
-            // Trích xuất Top 3
-            var top3Scores = topScoredVenues.Take(3).ToList();
+            // Trích xuất Top N venue cuối cùng
+            var top3Scores = topScoredVenues.Take(FinalVenueCount).ToList();
             var top3VenueHashes = new HashSet<string>(top3Scores.Select(s => s.VenueId));
             var top3VenueEntities = filteredVenues.Where(v => top3VenueHashes.Contains(v.Id)).ToList();
 
-            // 8. Lưu các Venues thắng cuộc vào Database để làm Cache và đánh dấu đề cử
+            // 9. Lưu các venue đề cử vào Database để làm cache
             await _venueRepository.AddRangeAsync(top3VenueEntities, cancellationToken);
             session.SetNominatedVenues(top3Scores.Select(s => s.VenueId));
 
-            // 9. Chuyển trạng thái sang Voting
+            // 10. Chuyển trạng thái sang Voting
             session.ChangeStatus(SessionStatus.Voting);
             await _unitOfWork.SaveChangesAsync(cancellationToken);
 
-            // 10. Lấy thông tin chi tiết cho Top 3 (photos, reviews, AI summary)
+            // 11. Lấy thông tin chi tiết cho Top venues cuối cùng (photos, reviews, AI summary)
             // Distance đã có sẵn từ Matrix API - không cần gọi thêm API nào
             var top3Result = await EnrichTop3VenuesAsync(
                 top3Scores, top3VenueEntities, filteredVenues, membersList, 
@@ -186,13 +200,13 @@ public class FindMeetPointHandler : IRequestHandler<FindMeetPointCommand, FindMe
         var placeDetails = await Task.WhenAll(detailTasks);
         var detailsDict = placeDetails.ToDictionary(d => d.PlaceId, d => d);
 
-        // 2. Parallel fetch AI summaries từ Gemini (hoặc dùng từ Google nếu có)
+        // 2. Parallel fetch AI summaries từ Groq (hoặc dùng từ Google nếu có)
         _logger.LogInformation("Generating AI summaries for top venues...");
         var summaryTasks = top3Scores.Select(async score => {
             var venue = top3VenueEntities.First(v => v.Id == score.VenueId);
             detailsDict.TryGetValue(venue.Id, out var placeDetail);
             
-            // Nếu Google không có tóm tắt AI, dùng Gemini để tóm tắt 20 review
+            // Nếu Google không có tóm tắt AI, dùng Groq để tóm tắt 20 review
             if (string.IsNullOrEmpty(placeDetail?.AiReviewSummary))
             {
                 var reviews = placeDetail?.Reviews.Select(r => r.Text) ?? new List<string>();

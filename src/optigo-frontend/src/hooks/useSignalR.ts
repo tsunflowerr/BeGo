@@ -145,11 +145,14 @@ export function useSignalR({
 
   useEffect(() => {
     mountedRef.current = true;
-    connect();
+    const timer = window.setTimeout(() => {
+      void connect();
+    }, 0);
 
     return () => {
       mountedRef.current = false;
-      disconnect();
+      window.clearTimeout(timer);
+      void disconnect();
     };
   }, [connect, disconnect]);
 

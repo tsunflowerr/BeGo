@@ -9,6 +9,11 @@ public interface ISessionNotifier
         Guid sessionId,
         Guid memberId,
         string memberName,
+        double latitude,
+        double longitude,
+        Domain.Enums.TransportMode transportMode,
+        DateTime joinedAt,
+        bool isHost,
         int totalMembers,
         CancellationToken ct = default);
 

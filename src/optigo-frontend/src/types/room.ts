@@ -106,6 +106,11 @@ export interface MemberJoinedEvent {
   sessionId: string;
   memberId: string;
   memberName: string;
+  latitude: number;
+  longitude: number;
+  transportMode: TransportMode;
+  joinedAt: string;
+  isHost: boolean;
   totalMembers: number;
 }
 

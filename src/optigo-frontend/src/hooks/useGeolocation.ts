@@ -13,6 +13,7 @@ interface UseGeolocationOptions {
   enableHighAccuracy?: boolean;
   timeout?: number;
   maximumAge?: number;
+  enabled?: boolean;
 }
 
 export function useGeolocation(options: UseGeolocationOptions = {}) {
@@ -20,13 +21,14 @@ export function useGeolocation(options: UseGeolocationOptions = {}) {
     enableHighAccuracy = true,
     timeout = 10000,
     maximumAge = 0,
+    enabled = true,
   } = options;
 
   const [state, setState] = useState<GeolocationState>({
     latitude: null,
     longitude: null,
     error: null,
-    loading: true,
+    loading: enabled,
   });
 
   const getCurrentPosition = useCallback(() => {
@@ -78,8 +80,12 @@ export function useGeolocation(options: UseGeolocationOptions = {}) {
   }, [enableHighAccuracy, timeout, maximumAge]);
 
   useEffect(() => {
+    if (!enabled) {
+      return;
+    }
+
     getCurrentPosition();
-  }, [getCurrentPosition]);
+  }, [enabled, getCurrentPosition]);
 
   return {
     ...state,

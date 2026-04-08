@@ -9,7 +9,6 @@ import {
   OptimizationResult,
   Venue,
   MemberJoinedEvent,
-  ComputingStartedEvent,
   OptimizationCompletedEvent,
   VoteSubmittedEvent,
   VotingCompletedEvent,
@@ -70,27 +69,26 @@ export function useSession({ sessionId, memberId }: UseSessionOptions): UseSessi
   // SignalR event handlers
   const handleMemberJoined = useCallback((event: MemberJoinedEvent) => {
     setMembers((prev) => {
-      // Check if member already exists
+      const nextMember: Member = {
+        id: event.memberId,
+        sessionId: event.sessionId,
+        name: event.memberName,
+        latitude: event.latitude,
+        longitude: event.longitude,
+        transportMode: event.transportMode,
+        joinedAt: event.joinedAt,
+        isHost: event.isHost,
+      };
+
       if (prev.some((m) => m.id === event.memberId)) {
-        return prev;
+        return prev.map((member) => member.id === event.memberId ? nextMember : member);
       }
-      // Add new member (we'll get full details on refresh)
-      return [
-        ...prev,
-        {
-          id: event.memberId,
-          sessionId: event.sessionId,
-          name: event.memberName,
-          latitude: 0,
-          longitude: 0,
-          transportMode: 0,
-          joinedAt: new Date().toISOString(),
-        },
-      ];
+
+      return [...prev, nextMember];
     });
   }, []);
 
-  const handleComputingStarted = useCallback((_event: ComputingStartedEvent) => {
+  const handleComputingStarted = useCallback(() => {
     setIsComputing(true);
     setSession((prev) => prev ? { ...prev, status: SessionStatus.Computing } : null);
   }, []);

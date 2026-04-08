@@ -41,6 +41,11 @@ public class JoinSessionHandler : IRequestHandler<JoinSessionCommand, Guid>
             session.Id, 
             member.Id, 
             member.Name, 
+            member.Latitude,
+            member.Longitude,
+            member.TransportMode,
+            member.JoinedAt,
+            session.Members.Count == 1,
             session.Members.Count, 
             cancellationToken);
 

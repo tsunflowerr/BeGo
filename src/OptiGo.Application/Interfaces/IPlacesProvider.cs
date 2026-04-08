@@ -6,18 +6,20 @@ public interface IPlacesProvider
 {
     /// <summary>
     /// Tìm kiếm danh sách địa điểm xung quanh tọa độ chỉ định.
-    /// Có thể dùng Mapbox, Google Places, hoặc OpenStreetMap Overpass.
+    /// Provider có thể thực hiện nhiều request nội bộ để vượt qua giới hạn số
+    /// kết quả mỗi request của nhà cung cấp, nhưng vẫn trả về một danh sách đã
+    /// được gộp và khử trùng lặp.
     /// </summary>
     /// <param name="latitude">Vĩ độ (Geometric Median)</param>
     /// <param name="longitude">Kinh độ</param>
     /// <param name="category">Loại hình (VD: cafe, restaurant, park)</param>
-    /// <param name="radiusMeters">Bán kính quét (mặc định 2000m)</param>
-    /// <param name="limit">Chỉ lấy top N kết quả</param>
+    /// <param name="radiusMeters">Bán kính khởi điểm cho chiến lược mở rộng tìm kiếm</param>
+    /// <param name="limit">Số lượng venue mong muốn sau khi gộp kết quả</param>
     Task<IReadOnlyList<Venue>> SearchNearbyAsync(
         double latitude, 
         double longitude, 
         string category, 
-        double radiusMeters = 2000,
+        double radiusMeters = 500,
         int limit = 50,
         CancellationToken ct = default);
 
