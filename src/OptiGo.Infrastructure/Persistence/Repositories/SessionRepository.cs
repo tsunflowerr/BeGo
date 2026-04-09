@@ -33,7 +33,7 @@ public class SessionRepository : ISessionRepository
 
     public Task UpdateAsync(Session session, CancellationToken ct = default)
     {
-        // EF Core change tracking sẽ tự phát hiện thay đổi khi SaveChanges
+
         _db.Sessions.Update(session);
         return Task.CompletedTask;
     }

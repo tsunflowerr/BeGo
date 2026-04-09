@@ -32,15 +32,13 @@ public class VoteConfiguration : IEntityTypeConfiguration<Vote>
             .HasColumnName("created_at")
             .IsRequired();
 
-        // Business rule: 1 member chỉ vote 1 lần trong 1 session
         builder.HasIndex(v => new { v.SessionId, v.MemberId })
             .HasDatabaseName("idx_votes_session_member")
             .IsUnique();
 
-        // Navigation: Vote → Member
         builder.HasOne(v => v.Member)
             .WithMany()
             .HasForeignKey(v => v.MemberId)
-            .OnDelete(DeleteBehavior.Restrict); // Không cascade delete Member khi xóa Vote
+            .OnDelete(DeleteBehavior.Restrict);
     }
 }

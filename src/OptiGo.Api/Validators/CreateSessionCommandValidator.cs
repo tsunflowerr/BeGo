@@ -3,9 +3,6 @@ using OptiGo.Application.UseCases;
 
 namespace OptiGo.Api.Validators;
 
-/// <summary>
-/// Validator cho CreateSessionCommand.
-/// </summary>
 public class CreateSessionCommandValidator : AbstractValidator<CreateSessionCommand>
 {
     public CreateSessionCommandValidator()

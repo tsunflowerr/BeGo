@@ -1,5 +1,6 @@
 using System.Net.Http.Json;
 using System.Text.Json.Serialization;
+using System.Globalization;
 using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Options;
 using OptiGo.Application.Interfaces;
@@ -8,11 +9,6 @@ using OptiGo.Domain.ValueObjects;
 
 namespace OptiGo.Infrastructure.ExternalServices.Google;
 
-/// <summary>
-/// Sử dụng Google Distance Matrix API để đo khoảng cách thực tế giữa các members và top địa điểm.
-/// Có khả năng đo thời gian Transit (Bus) cực kỳ chính xác thay vì phải nhân hệ số như Mapbox.
-/// Google Distance Matrix API trả về cả duration và distance trong 1 request.
-/// </summary>
 public class GoogleTravelTimeService : ITravelTimeService
 {
     private readonly HttpClient _httpClient;
@@ -30,20 +26,15 @@ public class GoogleTravelTimeService : ITravelTimeService
     }
 
     public async Task<double[,]> GetTravelTimeMatrixAsync(
-        IReadOnlyList<Coordinate> origins, 
-        IReadOnlyList<Coordinate> destinations, 
-        TransportMode mode, 
+        IReadOnlyList<Coordinate> origins,
+        IReadOnlyList<Coordinate> destinations,
+        TransportMode mode,
         CancellationToken ct = default)
     {
-        // Delegate to GetTravelMatrixAsync and return only durations
         var result = await GetTravelMatrixAsync(origins, destinations, mode, ct);
         return result.Durations;
     }
 
-    /// <summary>
-    /// Lấy cả ma trận duration và distance trong 1 API call.
-    /// Google Distance Matrix API tự động trả về cả 2.
-    /// </summary>
     public async Task<TravelMatrixResult> GetTravelMatrixAsync(
         IReadOnlyList<Coordinate> origins,
         IReadOnlyList<Coordinate> destinations,
@@ -60,9 +51,14 @@ public class GoogleTravelTimeService : ITravelTimeService
             _ => "driving"
         };
 
-        // Format: lat,lng|lat,lng...
-        var originsStr = string.Join("|", origins.Select(c => $"{c.Latitude:F6},{c.Longitude:F6}"));
-        var destsStr = string.Join("|", destinations.Select(c => $"{c.Latitude:F6},{c.Longitude:F6}"));
+        var originsStr = string.Join("|", origins.Select(c =>
+            string.Create(
+                CultureInfo.InvariantCulture,
+                $"{c.Latitude:F6},{c.Longitude:F6}")));
+        var destsStr = string.Join("|", destinations.Select(c =>
+            string.Create(
+                CultureInfo.InvariantCulture,
+                $"{c.Latitude:F6},{c.Longitude:F6}")));
 
         var url = $"https://maps.googleapis.com/maps/api/distancematrix/json" +
                   $"?origins={originsStr}" +
@@ -119,7 +115,6 @@ public class GoogleTravelTimeService : ITravelTimeService
     }
 }
 
-// Minimal DTOs
 internal class GoogleMatrixResponse
 {
     [JsonPropertyName("status")]

@@ -4,9 +4,6 @@ using OptiGo.Domain.Enums;
 
 namespace OptiGo.Api.Validators;
 
-/// <summary>
-/// Validator cho JoinSessionRequest.
-/// </summary>
 public class JoinSessionRequestValidator : AbstractValidator<JoinSessionRequest>
 {
     public JoinSessionRequestValidator()

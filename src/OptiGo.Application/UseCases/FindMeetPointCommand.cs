@@ -35,7 +35,7 @@ public class ReviewDto
     public string AuthorName { get; set; } = null!;
     public double Rating { get; set; }
     public string Text { get; set; } = null!;
-    public string? RelativeTime { get; set; } 
+    public string? RelativeTime { get; set; }
 }
 
 public class MemberRouteDto

@@ -132,9 +132,15 @@ export function useSignalR({
 
   const disconnect = useCallback(async () => {
     if (connectionRef.current) {
+      const connection = connectionRef.current;
       try {
-        await connectionRef.current.invoke("LeaveSessionGroup", sessionId);
-        await connectionRef.current.stop();
+        if (connection.state === signalR.HubConnectionState.Connected) {
+          await connection.invoke("LeaveSessionGroup", sessionId);
+        }
+
+        if (connection.state !== signalR.HubConnectionState.Disconnected) {
+          await connection.stop();
+        }
       } catch (error) {
         console.error("Failed to disconnect:", error);
       }

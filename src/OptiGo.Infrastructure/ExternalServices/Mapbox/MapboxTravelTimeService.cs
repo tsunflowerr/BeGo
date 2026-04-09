@@ -1,6 +1,7 @@
 using System.Net.Http.Json;
 using System.Text.Json;
 using System.Text.Json.Serialization;
+using System.Globalization;
 using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Options;
 using OptiGo.Application.Interfaces;
@@ -16,19 +17,12 @@ public class MapboxOptions
     public string ApiKey { get; set; } = string.Empty;
 }
 
-/// <summary>
-/// Adapter triển khai ITravelTimeService bằng Mapbox Matrix API.
-/// Matrix API trả về cả duration và distance trong 1 request - tối ưu billing.
-/// Khi muốn chuyển sang Google, tạo 1 class mới implement ITravelTimeService
-/// rồi swap DI registration — Application/Domain code không cần thay đổi gì.
-/// </summary>
 public class MapboxTravelTimeService : ITravelTimeService
 {
     private readonly HttpClient _httpClient;
     private readonly MapboxOptions _options;
     private readonly ILogger<MapboxTravelTimeService> _logger;
 
-    // Mapbox Matrix API giới hạn 25 tọa độ mỗi request
     private const int MaxCoordinatesPerRequest = 25;
 
     public MapboxTravelTimeService(
@@ -47,15 +41,10 @@ public class MapboxTravelTimeService : ITravelTimeService
         TransportMode mode,
         CancellationToken ct = default)
     {
-        // Delegate to GetTravelMatrixAsync and return only durations
         var result = await GetTravelMatrixAsync(origins, destinations, mode, ct);
         return result.Durations;
     }
 
-    /// <summary>
-    /// Lấy cả ma trận duration và distance trong 1 API call.
-    /// Tối ưu billing so với gọi Directions API riêng cho từng cặp.
-    /// </summary>
     public async Task<TravelMatrixResult> GetTravelMatrixAsync(
         IReadOnlyList<Coordinate> origins,
         IReadOnlyList<Coordinate> destinations,
@@ -73,8 +62,6 @@ public class MapboxTravelTimeService : ITravelTimeService
 
         var profile = MapboxTransportModeMapper.ToMapboxProfile(mode);
         var adjustmentFactor = MapboxTransportModeMapper.GetAdjustmentFactor(mode);
-
-        // Convert List<List<double?>> thành double[,] matrices
         var durations = new double[origins.Count, destinations.Count];
         var distances = new double[origins.Count, destinations.Count];
 
@@ -126,7 +113,10 @@ public class MapboxTravelTimeService : ITravelTimeService
     {
         var allCoords = origins.Concat(destinations).ToList();
         var coordinatesStr = string.Join(";",
-            allCoords.Select(c => $"{c.Longitude:F6},{c.Latitude:F6}"));
+            allCoords.Select(c =>
+                string.Create(
+                    CultureInfo.InvariantCulture,
+                    $"{c.Longitude:F6},{c.Latitude:F6}")));
 
         var sourceIndices = string.Join(";", Enumerable.Range(0, origins.Count));
         var destIndices = string.Join(";", Enumerable.Range(origins.Count, destinations.Count));
@@ -142,7 +132,12 @@ public class MapboxTravelTimeService : ITravelTimeService
             profile, origins.Count, destinations.Count);
 
         var response = await _httpClient.GetAsync(url, ct);
-        response.EnsureSuccessStatusCode();
+        if (!response.IsSuccessStatusCode)
+        {
+            var errorBody = await response.Content.ReadAsStringAsync(ct);
+            throw new InvalidOperationException(
+                $"Mapbox Matrix API failed with status {(int)response.StatusCode}: {errorBody}");
+        }
 
         var result = await response.Content.ReadFromJsonAsync<MapboxMatrixResponse>(cancellationToken: ct);
         if (result?.Durations is null)
@@ -185,7 +180,6 @@ public class MapboxTravelTimeService : ITravelTimeService
     }
 }
 
-// Mapbox Matrix API Response DTO
 internal class MapboxMatrixResponse
 {
     [JsonPropertyName("code")]

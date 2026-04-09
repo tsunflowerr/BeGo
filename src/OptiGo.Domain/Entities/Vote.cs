@@ -10,7 +10,6 @@ public class Vote
     public string VenueId { get; private set; } = null!;
     public DateTime CreatedAt { get; private set; }
 
-    // Navigation properties cho EF Core
     public Session? Session { get; private set; }
     public Member? Member { get; private set; }
 

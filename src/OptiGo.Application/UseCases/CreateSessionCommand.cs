@@ -42,7 +42,7 @@ public class CreateSessionHandler : MediatR.IRequestHandler<CreateSessionCommand
 
         await _sessionRepository.AddAsync(session, cancellationToken);
         await _unitOfWork.SaveChangesAsync(cancellationToken);
-        
+
         return new CreateSessionResult
         {
             SessionId = session.Id,

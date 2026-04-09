@@ -19,28 +19,28 @@ public class SessionsController : ControllerBase
     public async Task<IActionResult> GetSession(Guid id)
     {
         var session = await _mediator.Send(new GetSessionQuery(id));
-        
+
         if (session == null)
             return NotFound(new { Error = "Session not found", Message = $"Session with ID {id} does not exist." });
-        
+
         return Ok(session);
     }
 
     [HttpPost]
     public async Task<IActionResult> CreateSession([FromBody] CreateSessionCommand command)
     {
-        var sessionId = await _mediator.Send(command);
-        return Ok(new { SessionId = sessionId });
+        var result = await _mediator.Send(command);
+        return Ok(result);
     }
 
     [HttpPost("{id:guid}/members")]
     public async Task<IActionResult> JoinSession(Guid id, [FromBody] JoinSessionRequest request)
     {
         var command = new JoinSessionCommand(
-            id, 
-            request.MemberName, 
-            request.Latitude, 
-            request.Longitude, 
+            id,
+            request.MemberName,
+            request.Latitude,
+            request.Longitude,
             request.TransportMode);
 
         var memberId = await _mediator.Send(command);

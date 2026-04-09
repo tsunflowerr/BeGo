@@ -9,38 +9,30 @@ using FluentValidation;
 using FluentValidation.AspNetCore;
 using MediatR;
 
-// Đọc từ thư mục root của solution trước, nếu chạy qua dotnet run từ folder src/OptiGo.Api
 Env.Load("../../.env");
-// Đọc từ current directory nếu publish/docker
+
 Env.Load(".env");
 
 var builder = WebApplication.CreateBuilder(args);
 
-// ── Infrastructure (DB, Redis, Mapbox, Repositories) ──
 builder.Services.AddInfrastructure(builder.Configuration);
 
-// ── SignalR ──
 builder.Services.AddSignalR();
 builder.Services.AddScoped<ISessionNotifier, SignalRSessionNotifier>();
 
-// ── MediatR (Application layer CQRS) ──
 builder.Services.AddMediatR(cfg =>
 {
     cfg.RegisterServicesFromAssembly(typeof(OptiGo.Application.Interfaces.IUnitOfWork).Assembly);
     cfg.AddBehavior(typeof(IPipelineBehavior<,>), typeof(OptiGo.Api.Behaviors.ValidationBehavior<,>));
 });
 
-// ── FluentValidation ──
 builder.Services.AddFluentValidationAutoValidation();
 builder.Services.AddValidatorsFromAssemblyContaining<CreateSessionCommandValidator>();
 
-// ── Controllers ──
 builder.Services.AddControllers();
 
-// ── OpenAPI / Swagger ──
 builder.Services.AddOpenApi();
 
-// ── CORS (cho Next.js frontend) ──
 builder.Services.AddCors(options =>
 {
     options.AddPolicy("AllowFrontend", policy =>
@@ -52,13 +44,12 @@ builder.Services.AddCors(options =>
         policy.WithOrigins(origins)
             .AllowAnyHeader()
             .AllowAnyMethod()
-            .AllowCredentials(); // Cho SignalR
+            .AllowCredentials();
     });
 });
 
 var app = builder.Build();
 
-// ── Exception Handling Middleware ──
 app.Use(async (context, next) =>
 {
     try
@@ -76,7 +67,6 @@ app.Use(async (context, next) =>
     }
 });
 
-// ── Middleware Pipeline ──
 if (app.Environment.IsDevelopment())
 {
     app.MapOpenApi();
@@ -87,10 +77,8 @@ app.UseHttpsRedirection();
 app.UseCors("AllowFrontend");
 app.MapControllers();
 
-// ── SignalR Hubs ──
 app.MapHub<SessionHub>("/hubs/session");
 
-// ── Health check endpoint ──
 app.MapGet("/api/health", () => Results.Ok(new
 {
     status = "healthy",

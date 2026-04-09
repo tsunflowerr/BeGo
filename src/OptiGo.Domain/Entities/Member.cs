@@ -14,7 +14,6 @@ public class Member
     public TransportMode TransportMode { get; private set; }
     public DateTime JoinedAt { get; private set; }
 
-    // Navigation property cho EF Core
     public Session? Session { get; private set; }
 
     private Member() { }
@@ -30,10 +29,6 @@ public class Member
         JoinedAt = DateTime.UtcNow;
     }
 
-    /// <summary>
-    /// Lấy Coordinate Value Object (không lưu trực tiếp trong DB, được tính từ Lat/Lng).
-    /// </summary>
-    
     public Coordinate GetLocation()
     {
         return new Coordinate(Latitude, Longitude);

@@ -45,7 +45,6 @@ public class MemberConfiguration : IEntityTypeConfiguration<Member>
             .HasColumnName("joined_at")
             .IsRequired();
 
-        // Index cho tìm kiếm nhanh theo session
         builder.HasIndex(m => m.SessionId)
             .HasDatabaseName("idx_members_session");
     }

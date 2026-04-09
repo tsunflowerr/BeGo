@@ -7,7 +7,20 @@ import * as yup from "yup";
 interface CreateRoomModalProps {
   isOpen: boolean;
   onClose: () => void;
-  onSubmit: (data: { hostName: string; defaultQuery: string }) => Promise<void>;
+  onSubmit: (data: {
+    hostName: string;
+    defaultQuery: string;
+    latitude: number;
+    longitude: number;
+    transportMode: number;
+  }) => Promise<void>;
+  initialLocation?: {
+    latitude: number;
+    longitude: number;
+  } | null;
+  locationError?: string | null;
+  locationLoading?: boolean;
+  onRequestLocation?: () => void;
 }
 
 const schema = yup.object().shape({
@@ -23,9 +36,18 @@ const schema = yup.object().shape({
     .max(500, "Mô tả không được vượt quá 500 ký tự"),
 });
 
-function CreateRoomModalComponent({ isOpen, onClose, onSubmit }: CreateRoomModalProps) {
+function CreateRoomModalComponent({
+  isOpen,
+  onClose,
+  onSubmit,
+  initialLocation,
+  locationError,
+  locationLoading,
+  onRequestLocation,
+}: CreateRoomModalProps) {
   const [hostName, setHostName] = useState("");
   const [defaultQuery, setDefaultQuery] = useState("");
+  const [transportMode, setTransportMode] = useState(2);
   const [isLoading, setIsLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const inputRef = useRef<HTMLInputElement>(null);
@@ -42,6 +64,7 @@ function CreateRoomModalComponent({ isOpen, onClose, onSubmit }: CreateRoomModal
     if (!isOpen) {
       setHostName("");
       setDefaultQuery("");
+      setTransportMode(2);
       setError(null);
     }
   }, [isOpen]);
@@ -54,7 +77,17 @@ function CreateRoomModalComponent({ isOpen, onClose, onSubmit }: CreateRoomModal
 
     try {
       const data = await schema.validate({ hostName, defaultQuery });
-      await onSubmit({ hostName: data.hostName!, defaultQuery: data.defaultQuery || "" });
+      if (!initialLocation) {
+        throw new Error("Cần chia sẻ vị trí trước khi tạo phòng");
+      }
+
+      await onSubmit({
+        hostName: data.hostName!,
+        defaultQuery: data.defaultQuery || "",
+        latitude: initialLocation.latitude,
+        longitude: initialLocation.longitude,
+        transportMode,
+      });
     } catch (err) {
       if (err instanceof yup.ValidationError) {
         setError(err.message);
@@ -145,6 +178,48 @@ function CreateRoomModalComponent({ isOpen, onClose, onSubmit }: CreateRoomModal
                 <p className="mt-1.5 text-xs text-[#6b7280]">
                   AI sẽ giúp tìm địa điểm phù hợp dựa trên mô tả của bạn
                 </p>
+              </div>
+
+              <div>
+                <label htmlFor="transportMode" className="block text-sm font-medium text-[#1a1a2e] mb-2">
+                  Phương tiện di chuyển
+                </label>
+                <select
+                  id="transportMode"
+                  value={transportMode}
+                  onChange={(e) => setTransportMode(Number(e.target.value))}
+                  disabled={isLoading}
+                  className="w-full px-4 py-3 rounded-xl border-2 border-[#e8f9fd] bg-[#e8f9fd]/30 text-[#1a1a2e] focus:border-[#ff1e00] focus:outline-none focus:ring-2 focus:ring-[#ff1e00]/20 transition-all disabled:opacity-50"
+                >
+                  <option value={0}>Đi bộ</option>
+                  <option value={1}>Xe đạp</option>
+                  <option value={2}>Xe máy</option>
+                  <option value={3}>Ô tô</option>
+                  <option value={4}>Xe buýt</option>
+                </select>
+              </div>
+
+              <div className="rounded-xl border border-[#e8f9fd] bg-[#e8f9fd]/30 p-4">
+                <div className="flex items-center justify-between gap-3">
+                  <div>
+                    <p className="text-sm font-medium text-[#1a1a2e]">Vị trí hiện tại</p>
+                    <p className="text-xs text-[#6b7280] mt-1">
+                      {initialLocation
+                        ? `${initialLocation.latitude.toFixed(5)}, ${initialLocation.longitude.toFixed(5)}`
+                        : locationLoading
+                          ? "Đang lấy vị trí..."
+                          : locationError || "Chưa có vị trí"}
+                    </p>
+                  </div>
+                  <button
+                    type="button"
+                    onClick={onRequestLocation}
+                    disabled={isLoading || locationLoading}
+                    className="px-3 py-2 rounded-lg text-sm font-medium text-[#ff1e00] bg-white border border-[#ffd7d1] hover:bg-[#fff5f3] transition-colors disabled:opacity-50"
+                  >
+                    Lấy vị trí
+                  </button>
+                </div>
               </div>
 
               {/* Error message */}

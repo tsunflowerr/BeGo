@@ -3,9 +3,6 @@ using OptiGo.Application.Interfaces;
 
 namespace OptiGo.Application.UseCases;
 
-/// <summary>
-/// Handler xử lý GetSessionQuery.
-/// </summary>
 public class GetSessionQueryHandler : IRequestHandler<GetSessionQuery, SessionDto?>
 {
     private readonly ISessionRepository _sessionRepository;
@@ -18,11 +15,10 @@ public class GetSessionQueryHandler : IRequestHandler<GetSessionQuery, SessionDt
     public async Task<SessionDto?> Handle(GetSessionQuery request, CancellationToken cancellationToken)
     {
         var session = await _sessionRepository.GetByIdWithDetailsAsync(request.SessionId, cancellationToken);
-        
+
         if (session == null)
             return null;
 
-        // Xác định host (member đầu tiên tham gia)
         var orderedMembers = session.Members.OrderBy(m => m.JoinedAt).ToList();
         var hostMemberId = orderedMembers.FirstOrDefault()?.Id;
 

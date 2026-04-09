@@ -1,6 +1,6 @@
 "use client";
 
-import { memo, useCallback, useEffect, useRef, useState } from "react";
+import { memo, useEffect, useRef, useState } from "react";
 import { motion, AnimatePresence } from "framer-motion";
 import { Member, Venue, GeometricMedian } from "@/types";
 
@@ -15,6 +15,50 @@ interface MapViewProps {
 
 // Default center (Ho Chi Minh City)
 const DEFAULT_CENTER = { lat: 10.8231, lng: 106.6297 };
+const GOOGLE_MAPS_SCRIPT_ID = "google-maps-js";
+
+let googleMapsLoadingPromise: Promise<void> | null = null;
+
+function loadGoogleMapsApi() {
+  if (typeof google !== "undefined" && google.maps) {
+    return Promise.resolve();
+  }
+
+  if (googleMapsLoadingPromise) {
+    return googleMapsLoadingPromise;
+  }
+
+  googleMapsLoadingPromise = new Promise<void>((resolve, reject) => {
+    const existingScript = document.getElementById(
+      GOOGLE_MAPS_SCRIPT_ID
+    ) as HTMLScriptElement | null;
+
+    if (existingScript) {
+      existingScript.addEventListener("load", () => resolve(), { once: true });
+      existingScript.addEventListener(
+        "error",
+        () => reject(new Error("Failed to load Google Maps")),
+        { once: true }
+      );
+      return;
+    }
+
+    const script = document.createElement("script");
+    script.id = GOOGLE_MAPS_SCRIPT_ID;
+    script.src = `https://maps.googleapis.com/maps/api/js?key=${process.env.NEXT_PUBLIC_GOOGLE_MAPS_API_KEY}&libraries=marker&v=weekly`;
+    script.async = true;
+    script.defer = true;
+    script.onload = () => resolve();
+    script.onerror = () => {
+      googleMapsLoadingPromise = null;
+      reject(new Error("Failed to load Google Maps"));
+    };
+
+    document.head.appendChild(script);
+  });
+
+  return googleMapsLoadingPromise;
+}
 
 function MapViewComponent({
   members,
@@ -30,69 +74,33 @@ function MapViewComponent({
   const [mapLoaded, setMapLoaded] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
-  // Calculate bounds from all points
-  const calculateBounds = useCallback(() => {
-    const allPoints: { lat: number; lng: number }[] = [];
-    
-    members.forEach((m) => {
-      if (m.latitude && m.longitude) {
-        allPoints.push({ lat: m.latitude, lng: m.longitude });
-      }
-    });
-    
-    if (geometricMedian) {
-      allPoints.push({ lat: geometricMedian.latitude, lng: geometricMedian.longitude });
-    }
-    
-    venues.forEach((v) => {
-      allPoints.push({ lat: v.latitude, lng: v.longitude });
-    });
-    
-    return allPoints;
-  }, [members, geometricMedian, venues]);
-
   // Initialize map
   useEffect(() => {
+    let isCancelled = false;
+    const markers = markersRef.current;
+
     const initMap = async () => {
       if (!mapRef.current || mapInstanceRef.current) return;
 
       try {
-        // Check if Google Maps is loaded
-        if (typeof google === "undefined" || !google.maps) {
-          // Load Google Maps dynamically
-          const script = document.createElement("script");
-          script.src = `https://maps.googleapis.com/maps/api/js?key=${process.env.NEXT_PUBLIC_GOOGLE_MAPS_API_KEY}&libraries=marker&v=weekly`;
-          script.async = true;
-          script.defer = true;
-          
-          script.onload = () => {
-            createMap();
-          };
-          
-          script.onerror = () => {
-            setError("Không thể tải Google Maps");
-          };
-          
-          document.head.appendChild(script);
-        } else {
+        await loadGoogleMapsApi();
+
+        if (!isCancelled) {
           createMap();
         }
       } catch (err) {
         console.error("Map init error:", err);
-        setError("Không thể khởi tạo bản đồ");
+        if (!isCancelled) {
+          setError("Không thể khởi tạo bản đồ");
+        }
       }
     };
 
     const createMap = () => {
       if (!mapRef.current) return;
-      
-      const points = calculateBounds();
-      const center = points.length > 0 
-        ? { lat: points[0].lat, lng: points[0].lng }
-        : DEFAULT_CENTER;
 
       const map = new google.maps.Map(mapRef.current, {
-        center,
+        center: DEFAULT_CENTER,
         zoom: 14,
         mapId: "optigo-map",
         disableDefaultUI: false,
@@ -116,12 +124,13 @@ function MapViewComponent({
     initMap();
 
     return () => {
-      markersRef.current.forEach((marker) => {
+      isCancelled = true;
+      markers.forEach((marker) => {
         marker.map = null;
       });
-      markersRef.current.clear();
+      markers.clear();
     };
-  }, [calculateBounds]);
+  }, []);
 
   // Update markers when data changes
   useEffect(() => {

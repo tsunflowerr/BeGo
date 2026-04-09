@@ -3,9 +3,6 @@ using OptiGo.Application.UseCases;
 
 namespace OptiGo.Api.Validators;
 
-/// <summary>
-/// Validator cho FindMeetPointCommand.
-/// </summary>
 public class FindMeetPointCommandValidator : AbstractValidator<FindMeetPointCommand>
 {
     public FindMeetPointCommandValidator()

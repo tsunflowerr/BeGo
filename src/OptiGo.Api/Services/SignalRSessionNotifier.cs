@@ -5,11 +5,6 @@ using OptiGo.Api.Hubs;
 
 namespace OptiGo.Api.Services;
 
-/// <summary>
-/// Triển khai ISessionNotifier dùng ASP.NET Core SignalR.
-/// Dùng IHubContext để push events từ bất kỳ service nào (không chỉ trong Hub).
-/// Được inject vào các MediatR Handlers để gửi notification sau mỗi action.
-/// </summary>
 public class SignalRSessionNotifier : ISessionNotifier
 {
     private readonly IHubContext<SessionHub> _hubContext;
@@ -23,7 +18,6 @@ public class SignalRSessionNotifier : ISessionNotifier
         _logger = logger;
     }
 
-    /// <inheritdoc/>
     public async Task NotifyMemberJoinedAsync(
         Guid sessionId,
         Guid memberId,
@@ -54,7 +48,6 @@ public class SignalRSessionNotifier : ISessionNotifier
         }, ct);
     }
 
-    /// <inheritdoc/>
     public async Task NotifyComputingStartedAsync(Guid sessionId, CancellationToken ct = default)
     {
         var group = SessionHub.GetGroupName(sessionId.ToString());
@@ -68,7 +61,6 @@ public class SignalRSessionNotifier : ISessionNotifier
         }, ct);
     }
 
-    /// <inheritdoc/>
     public async Task NotifyOptimizationCompletedAsync(
         Guid sessionId,
         object result,
@@ -85,7 +77,6 @@ public class SignalRSessionNotifier : ISessionNotifier
         }, ct);
     }
 
-    /// <inheritdoc/>
     public async Task NotifyVoteSubmittedAsync(
         Guid sessionId,
         Guid memberId,
@@ -111,7 +102,6 @@ public class SignalRSessionNotifier : ISessionNotifier
         }, ct);
     }
 
-    /// <inheritdoc/>
     public async Task NotifyVotingCompletedAsync(
         Guid sessionId,
         string winningVenueId,

@@ -15,9 +15,6 @@ public class GoogleOptions
     public string ApiKey { get; set; } = string.Empty;
 }
 
-/// <summary>
-/// Sử dụng Google Places API (New) - Tránh lỗi cước phí (Billing) nhờ truyền đúng FieldMask.
-/// </summary>
 public class GooglePlacesProvider : IPlacesProvider
 {
     private readonly HttpClient _httpClient;
@@ -27,7 +24,7 @@ public class GooglePlacesProvider : IPlacesProvider
     private const int MaxNearbyResultsPerRequest = 20;
     private const double DefaultInitialSearchRadiusMeters = 500;
     private const double MaxSearchRadiusMeters = 5000;
-    // Max photos/reviews để tránh billing cao
+
     private const int MaxPhotos = 5;
     private const int MaxReviews = 20;
     private const int PhotoMaxWidth = 800;
@@ -48,11 +45,11 @@ public class GooglePlacesProvider : IPlacesProvider
     }
 
     public async Task<IReadOnlyList<Venue>> SearchNearbyAsync(
-        double latitude, 
-        double longitude, 
-        string category, 
+        double latitude,
+        double longitude,
+        string category,
         double radiusMeters = DefaultInitialSearchRadiusMeters,
-        int limit = 50, 
+        int limit = 50,
         CancellationToken ct = default)
     {
         var desiredCount = Math.Clamp(limit, 1, 50);
@@ -63,9 +60,6 @@ public class GooglePlacesProvider : IPlacesProvider
         var searchCalls = 0;
         var lastSearchedRadius = initialRadius;
 
-        // Phase 1: mở rộng bán kính đồng tâm từ điểm median.
-        // Nearby Search chỉ trả tối đa 20 kết quả/request, nên khi chạm 20 unique từ cùng
-        // một tâm thì cần chuyển sang phase 2 để tránh gọi lặp vô ích.
         for (var currentRadius = initialRadius;
              currentRadius <= MaxSearchRadiusMeters && uniqueVenues.Count < Math.Min(desiredCount, MaxNearbyResultsPerRequest);
              currentRadius = Math.Min(currentRadius * 2, MaxSearchRadiusMeters))
@@ -88,7 +82,7 @@ public class GooglePlacesProvider : IPlacesProvider
 
             if (venues.Count < MaxNearbyResultsPerRequest)
             {
-                // Khu vực còn thưa, cứ tiếp tục mở rộng.
+
                 if (currentRadius >= MaxSearchRadiusMeters)
                 {
                     break;
@@ -104,8 +98,6 @@ public class GooglePlacesProvider : IPlacesProvider
             }
         }
 
-        // Phase 2: Nearby Search không thể trả >20 kết quả từ cùng 1 tâm.
-        // Khi cần >20 venue, quét thêm một số tâm phụ xung quanh median và khử trùng lặp.
         if (uniqueVenues.Count < desiredCount)
         {
             var ringOffsetMeters = Math.Max(initialRadius * 1.25, 650);
@@ -163,24 +155,13 @@ public class GooglePlacesProvider : IPlacesProvider
         return orderedVenues;
     }
 
-    /// <summary>
-    /// Lấy thông tin chi tiết của một địa điểm bao gồm ảnh, reviews, và AI summary.
-    /// Sử dụng Google Places API (New) GET endpoint.
-    /// </summary>
     public async Task<PlaceDetailResult> GetPlaceDetailAsync(string placeId, CancellationToken ct = default)
     {
         var result = new PlaceDetailResult { PlaceId = placeId };
 
-        // Google Places API (New) yêu cầu format: places/{placeId}
-        // Nếu placeId đã có prefix "places/" thì dùng luôn, không thì thêm vào
         var resourceName = placeId.StartsWith("places/") ? placeId : $"places/{placeId}";
         var url = $"https://places.googleapis.com/v1/{resourceName}?languageCode=vi";
 
-        // FieldMask cho Place Details - chỉ lấy các field cần thiết để tối ưu billing
-        // photos: Danh sách ảnh của địa điểm
-        // reviews: Danh sách reviews từ người dùng
-        // generativeSummary: AI-generated summary (nếu có)
-        // editorialSummary: Editorial summary fallback
         var fieldMask = "photos,reviews,generativeSummary,editorialSummary";
 
         _logger.LogInformation("Calling Google Places Detail API for {PlaceId}", placeId);
@@ -211,7 +192,6 @@ public class GooglePlacesProvider : IPlacesProvider
                 return result;
             }
 
-            // Parse Photos - chuyển photo reference thành URL có thể truy cập
             if (detailResponse.Photos != null && detailResponse.Photos.Count > 0)
             {
                 result.PhotoUrls = detailResponse.Photos
@@ -221,7 +201,6 @@ public class GooglePlacesProvider : IPlacesProvider
                     .ToList();
             }
 
-            // Parse Reviews
             if (detailResponse.Reviews != null && detailResponse.Reviews.Count > 0)
             {
                 result.Reviews = detailResponse.Reviews
@@ -237,7 +216,6 @@ public class GooglePlacesProvider : IPlacesProvider
                     .ToList();
             }
 
-            // AI Summary - ưu tiên generativeSummary, fallback editorialSummary
             if (detailResponse.GenerativeSummary?.Overview?.Text != null)
             {
                 result.AiReviewSummary = detailResponse.GenerativeSummary.Overview.Text;
@@ -259,10 +237,6 @@ public class GooglePlacesProvider : IPlacesProvider
         return result;
     }
 
-    /// <summary>
-    /// Build URL để lấy ảnh từ Google Places API (New).
-    /// Format: https://places.googleapis.com/v1/{photo_name}/media?maxWidthPx={width}&key={apiKey}
-    /// </summary>
     private string BuildPhotoUrl(string photoName)
     {
         return $"https://places.googleapis.com/v1/{photoName}/media?maxWidthPx={PhotoMaxWidth}&key={_options.ApiKey}";
@@ -373,7 +347,6 @@ public class GooglePlacesProvider : IPlacesProvider
     private static double RadiansToDegrees(double radians) => radians * 180.0 / Math.PI;
 }
 
-// Minimal DTOs for Google Places API (New)
 internal class GooglePlacesResponse
 {
     [JsonPropertyName("places")]
@@ -419,7 +392,6 @@ internal class GoogleLocation
     public double Longitude { get; set; }
 }
 
-// DTOs for Google Places Detail API (New)
 internal class GooglePlaceDetailResponse
 {
     [JsonPropertyName("photos")]

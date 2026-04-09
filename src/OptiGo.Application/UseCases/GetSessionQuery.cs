@@ -3,14 +3,8 @@ using OptiGo.Domain.Enums;
 
 namespace OptiGo.Application.UseCases;
 
-/// <summary>
-/// Query để lấy thông tin chi tiết của một Session.
-/// </summary>
 public record GetSessionQuery(Guid SessionId) : IRequest<SessionDto?>;
 
-/// <summary>
-/// DTO trả về thông tin Session cho Frontend.
-/// </summary>
 public class SessionDto
 {
     public Guid Id { get; init; }

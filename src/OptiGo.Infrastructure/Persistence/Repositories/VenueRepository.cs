@@ -22,10 +22,9 @@ public class VenueRepository : IVenueRepository
         string category, double centerLat, double centerLng, double radiusMeters,
         CancellationToken ct = default)
     {
-        // Chuyển radius từ mét sang khoảng tương đương độ (xấp xỉ)
-        // 1 độ latitude ≈ 111,320m
+
         var latDelta = radiusMeters / 111_320.0;
-        // 1 độ longitude ≈ 111,320 * cos(latitude) mét
+
         var lngDelta = radiusMeters / (111_320.0 * Math.Cos(centerLat * Math.PI / 180.0));
 
         var minLat = centerLat - latDelta;
@@ -33,14 +32,12 @@ public class VenueRepository : IVenueRepository
         var minLng = centerLng - lngDelta;
         var maxLng = centerLng + lngDelta;
 
-        // Bounding box pre-filter (rất nhanh nhờ B-tree index trên lat/lng)
-        // Sau đó có thể refine bằng Haversine nếu cần chính xác hơn
         return await _db.Venues
             .Where(v => v.Category == category
                 && v.Latitude >= minLat && v.Latitude <= maxLat
                 && v.Longitude >= minLng && v.Longitude <= maxLng)
             .OrderByDescending(v => v.Rating)
-            .Take(50) // Giới hạn để tránh quá tải
+            .Take(50)
             .ToListAsync(ct);
     }
 

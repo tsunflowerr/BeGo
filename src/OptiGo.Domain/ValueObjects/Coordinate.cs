@@ -11,7 +11,7 @@ public record struct Coordinate
     {
         if (latitude is < -90.0 or > 90.0)
             throw new ArgumentException("Latitude must be between -90 and 90 degrees.", nameof(latitude));
-            
+
         if (longitude is < -180.0 or > 180.0)
             throw new ArgumentException("Longitude must be between -180 and 180 degrees.", nameof(longitude));
 
@@ -19,13 +19,9 @@ public record struct Coordinate
         Longitude = longitude;
     }
 
-    /// <summary>
-    /// Tính khoảng cách Haversine giữa 2 tọa độ.
-    /// Giá trị trả về là Mét (m).
-    /// </summary>
     public double DistanceTo(Coordinate other)
     {
-        var R = 6371e3; // Bán kính Trái đất tính bằng Mét
+        var R = 6371e3;
         var dLat = ToRadians(other.Latitude - Latitude);
         var dLon = ToRadians(other.Longitude - Longitude);
         var lat1 = ToRadians(Latitude);
@@ -33,7 +29,7 @@ public record struct Coordinate
 
         var a = Math.Sin(dLat / 2) * Math.Sin(dLat / 2) +
                 Math.Sin(dLon / 2) * Math.Sin(dLon / 2) * Math.Cos(lat1) * Math.Cos(lat2);
-        
+
         var c = 2 * Math.Atan2(Math.Sqrt(a), Math.Sqrt(1 - a));
         return R * c;
     }

@@ -4,9 +4,6 @@ using OptiGo.Domain.Exceptions;
 
 namespace OptiGo.Application.UseCases;
 
-/// <summary>
-/// Handler xử lý UpdateSessionQueryCommand.
-/// </summary>
 public class UpdateSessionQueryHandler : IRequestHandler<UpdateSessionQueryCommand, Unit>
 {
     private readonly ISessionRepository _sessionRepository;
@@ -21,7 +18,7 @@ public class UpdateSessionQueryHandler : IRequestHandler<UpdateSessionQueryComma
     public async Task<Unit> Handle(UpdateSessionQueryCommand request, CancellationToken cancellationToken)
     {
         var session = await _sessionRepository.GetByIdAsync(request.SessionId, cancellationToken);
-        
+
         if (session == null)
             throw new DomainException($"Session {request.SessionId} not found.");
 
@@ -29,7 +26,7 @@ public class UpdateSessionQueryHandler : IRequestHandler<UpdateSessionQueryComma
             throw new DomainException("Cannot update query after computation has started.");
 
         session.SetQueryText(request.QueryText);
-        
+
         await _sessionRepository.UpdateAsync(session, cancellationToken);
         await _unitOfWork.SaveChangesAsync(cancellationToken);
 

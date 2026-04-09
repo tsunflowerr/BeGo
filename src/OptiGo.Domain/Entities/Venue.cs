@@ -5,7 +5,7 @@ namespace OptiGo.Domain.Entities;
 
 public class Venue
 {
-    public string Id { get; private set; } = null!; // Mapbox/Google Place ID
+    public string Id { get; private set; } = null!;
     public string Name { get; private set; } = null!;
     public string Category { get; private set; } = null!;
     public double Latitude { get; private set; }

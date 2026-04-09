@@ -14,7 +14,7 @@ public class SessionConfiguration : IEntityTypeConfiguration<Session>
         builder.HasKey(s => s.Id);
         builder.Property(s => s.Id)
             .HasColumnName("id")
-            .ValueGeneratedNever(); // Domain tự generate Guid
+            .ValueGeneratedNever();
 
         builder.Property(s => s.HostName)
             .HasColumnName("host_name")
@@ -23,7 +23,7 @@ public class SessionConfiguration : IEntityTypeConfiguration<Session>
 
         builder.Property(s => s.Status)
             .HasColumnName("status")
-            .HasConversion<string>() // Lưu enum dạng string cho readability
+            .HasConversion<string>()
             .HasMaxLength(30)
             .IsRequired();
 
@@ -43,14 +43,11 @@ public class SessionConfiguration : IEntityTypeConfiguration<Session>
             .HasColumnName("winning_venue_id")
             .HasMaxLength(100);
 
-        // Mảng NominatedVenueIds sử dụng tính năng primitive collections của EF Core (text[])
         builder.Property(s => s.NominatedVenueIds)
             .HasColumnName("nominated_venue_ids")
             .HasColumnType("text[]")
             .UsePropertyAccessMode(PropertyAccessMode.Field);
 
-        // Cấu hình relationship Session → Members (1:N)
-        // EF Core access backing field "_members" 
         builder.HasMany(s => s.Members)
             .WithOne(m => m.Session)
             .HasForeignKey(m => m.SessionId)
@@ -60,7 +57,6 @@ public class SessionConfiguration : IEntityTypeConfiguration<Session>
             .FindNavigation(nameof(Session.Members))!
             .SetPropertyAccessMode(PropertyAccessMode.Field);
 
-        // Cấu hình relationship Session → Votes (1:N)
         builder.HasMany(s => s.Votes)
             .WithOne(v => v.Session)
             .HasForeignKey(v => v.SessionId)

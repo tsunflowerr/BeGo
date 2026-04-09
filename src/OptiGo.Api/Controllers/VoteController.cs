@@ -24,9 +24,9 @@ public class VoteController : ControllerBase
         if (!result.IsSuccess)
             return BadRequest(new { error = result.ErrorMessage });
 
-        return Ok(new 
-        { 
-            message = "Vote submitted successfully", 
+        return Ok(new
+        {
+            message = "Vote submitted successfully",
             isVotingCompleted = result.IsVotingCompleted,
             winningVenueId = result.WinningVenueId
         });

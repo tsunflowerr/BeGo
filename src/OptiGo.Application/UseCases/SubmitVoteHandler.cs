@@ -31,7 +31,7 @@ public class SubmitVoteHandler : IRequestHandler<SubmitVoteCommand, SubmitVoteRe
 
     public async Task<SubmitVoteResult> Handle(SubmitVoteCommand request, CancellationToken cancellationToken)
     {
-        // 1. Lấy Session cùng toàn bộ Members và Votes
+
         var session = await _sessionRepository.GetByIdWithDetailsAsync(request.SessionId, cancellationToken);
         if (session == null)
         {
@@ -40,47 +40,42 @@ public class SubmitVoteHandler : IRequestHandler<SubmitVoteCommand, SubmitVoteRe
 
         try
         {
-            // 2. Tạo phiếu bầu và thêm vào Session (Aggregate Root sẽ tự kiểm tra Domain logic)
+
             var vote = new Vote(request.SessionId, request.MemberId, request.VenueId);
             session.SubmitVote(vote);
 
             bool isCompleted = false;
             string? winningVenueId = null;
 
-            // 3. Nếu mọi người đều đã vote
             if (session.AllMembersVoted())
             {
                 _logger.LogInformation("All members voted in Session {SessionId}. Completing session.", session.Id);
-                
-                // Đổi trạng thái sang Completed
+
                 session.ChangeStatus(SessionStatus.Completed);
                 isCompleted = true;
 
-                // Tìm quán có nhiều phiếu bầu nhất (Trường hợp hòa: Lấy quán bị vote sớm nhất hoặc ngẫu nhiên)
                 winningVenueId = session.Votes
                     .GroupBy(v => v.VenueId)
                     .OrderByDescending(g => g.Count())
                     .First()
                     .Key;
-                
+
                 session.SetWinningVenue(winningVenueId);
             }
 
-            // 4. Lưu lại vào Database
             await _unitOfWork.SaveChangesAsync(cancellationToken);
 
-            // SignalR: Notify vote submitted
             await _notifier.NotifyVoteSubmittedAsync(
-                session.Id, 
-                request.MemberId, 
-                request.VenueId, 
-                session.Votes.Count, 
-                session.Members.Count, 
+                session.Id,
+                request.MemberId,
+                request.VenueId,
+                session.Votes.Count,
+                session.Members.Count,
                 cancellationToken);
 
             if (isCompleted && winningVenueId != null)
             {
-                // SignalR: Notify voting completed
+
                 await _notifier.NotifyVotingCompletedAsync(session.Id, winningVenueId, cancellationToken);
             }
 
@@ -93,7 +88,7 @@ public class SubmitVoteHandler : IRequestHandler<SubmitVoteCommand, SubmitVoteRe
         }
         catch (Exception ex)
         {
-            // Bắt DomainException (Ví dụ: Member đã vote rồi, hoặc session không ở trạng thái Voting)
+
             _logger.LogWarning(ex, "Failed to submit vote for session {SessionId}, member {MemberId}", request.SessionId, request.MemberId);
             return new SubmitVoteResult { IsSuccess = false, ErrorMessage = ex.Message };
         }

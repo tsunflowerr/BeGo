@@ -6,10 +6,10 @@ using OptiGo.Domain.Enums;
 namespace OptiGo.Application.UseCases;
 
 public record JoinSessionCommand(
-    Guid SessionId, 
-    string MemberName, 
-    double Latitude, 
-    double Longitude, 
+    Guid SessionId,
+    string MemberName,
+    double Latitude,
+    double Longitude,
     TransportMode TransportMode) : IRequest<Guid>;
 
 public class JoinSessionHandler : IRequestHandler<JoinSessionCommand, Guid>
@@ -36,17 +36,16 @@ public class JoinSessionHandler : IRequestHandler<JoinSessionCommand, Guid>
         session.AddMember(member);
         await _unitOfWork.SaveChangesAsync(cancellationToken);
 
-        // SignalR: Notify member joined
         await _notifier.NotifyMemberJoinedAsync(
-            session.Id, 
-            member.Id, 
-            member.Name, 
+            session.Id,
+            member.Id,
+            member.Name,
             member.Latitude,
             member.Longitude,
             member.TransportMode,
             member.JoinedAt,
             session.Members.Count == 1,
-            session.Members.Count, 
+            session.Members.Count,
             cancellationToken);
 
         return member.Id;

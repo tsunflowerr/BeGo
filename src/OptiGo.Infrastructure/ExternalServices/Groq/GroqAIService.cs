@@ -7,9 +7,6 @@ using OptiGo.Application.Interfaces;
 
 namespace OptiGo.Infrastructure.ExternalServices.Groq;
 
-/// <summary>
-/// Triển khai IAIService dùng Groq Chat Completions API.
-/// </summary>
 public class GroqAIService : IAIService
 {
     private readonly HttpClient _http;

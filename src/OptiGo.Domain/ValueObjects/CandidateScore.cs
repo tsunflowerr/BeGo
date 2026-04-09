@@ -24,17 +24,14 @@ public struct ScoringWeights
 public class CandidateScore
 {
     public string VenueId { get; init; } = null!;
-    
-    // Raw Metrics
+
     public double TotalTimeSeconds { get; init; }
     public double TimeStdDeviation { get; init; }
     public double QualityRating { get; init; }
 
-    // Normalized Metrics [0.0 - 1.0]
     public double NormalizedTotalTime { get; set; }
     public double NormalizedStdDeviation { get; set; }
     public double NormalizedQuality { get; set; }
 
-    // Final Computed Score (Smaller is better, because we want MINIMUM time and variation)
     public double FinalScore { get; set; }
 }

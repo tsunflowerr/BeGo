@@ -54,7 +54,6 @@ public class VenueConfiguration : IEntityTypeConfiguration<Venue>
             .HasColumnName("cached_at")
             .IsRequired();
 
-        // Index: tìm venue theo category nhanh
         builder.HasIndex(v => v.Category)
             .HasDatabaseName("idx_venues_category");
     }

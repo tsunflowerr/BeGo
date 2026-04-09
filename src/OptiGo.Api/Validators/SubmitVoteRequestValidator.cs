@@ -3,9 +3,6 @@ using OptiGo.Api.Controllers;
 
 namespace OptiGo.Api.Validators;
 
-/// <summary>
-/// Validator cho SubmitVoteRequest.
-/// </summary>
 public class SubmitVoteRequestValidator : AbstractValidator<SubmitVoteRequest>
 {
     public SubmitVoteRequestValidator()

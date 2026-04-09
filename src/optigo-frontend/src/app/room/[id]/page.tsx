@@ -26,7 +26,12 @@ import {
 
 export default function RoomPage() {
   const params = useParams();
-  const sessionId = params.id as string;
+  const sessionId =
+    typeof params.id === "string"
+      ? params.id
+      : Array.isArray(params.id)
+        ? params.id[0] ?? ""
+        : "";
 
   // Toast notifications
   const { toasts, removeToast, success, info, warning } = useToasts();

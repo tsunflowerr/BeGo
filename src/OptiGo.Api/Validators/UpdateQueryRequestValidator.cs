@@ -3,9 +3,6 @@ using OptiGo.Api.Controllers;
 
 namespace OptiGo.Api.Validators;
 
-/// <summary>
-/// Validator cho UpdateQueryRequest.
-/// </summary>
 public class UpdateQueryRequestValidator : AbstractValidator<UpdateQueryRequest>
 {
     public UpdateQueryRequestValidator()

@@ -6,10 +6,6 @@ using OptiGo.Domain.Exceptions;
 
 namespace OptiGo.Domain.Entities;
 
-/// <summary>
-/// Session Aggregate Root — Quản lý toàn bộ lifecycle của 1 phiên tìm điểm hẹn.
-/// EF Core sẽ sử dụng private constructor để hydrate từ DB.
-/// </summary>
 public class Session
 {
     public Guid Id { get; private set; }
@@ -73,7 +69,6 @@ public class Session
         if (Status == SessionStatus.Completed)
             throw new DomainException("Cannot change status of a completed session.");
 
-        // Enforce valid transitions
         var valid = (Status, newStatus) switch
         {
             (SessionStatus.WaitingForMembers, SessionStatus.Computing) => true,
@@ -111,12 +106,12 @@ public class Session
         _nominatedVenueIds.Clear();
         _nominatedVenueIds.AddRange(venueIds);
     }
-    
+
     public void SetWinningVenue(string? venueId)
     {
         if (Status != SessionStatus.Completed)
             throw new DomainException("Can only set winning venue when session is completed.");
-            
+
         WinningVenueId = venueId;
     }
 
