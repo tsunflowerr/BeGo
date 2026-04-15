@@ -17,6 +17,11 @@ public interface ITravelTimeService
         IReadOnlyList<Coordinate> destinations,
         TransportMode mode,
         CancellationToken ct = default);
+    Task<RouteResult> GetRouteAsync(
+        Coordinate origin,
+        Coordinate destination,
+        TransportMode mode,
+        CancellationToken ct = default);
 }
 
 public class TravelMatrixResult
@@ -25,4 +30,10 @@ public class TravelMatrixResult
     public double[,] Durations { get; set; } = new double[0, 0];
 
     public double[,] Distances { get; set; } = new double[0, 0];
+}
+
+public class RouteResult
+{
+    public double DurationSeconds { get; set; }
+    public double DistanceMeters { get; set; }
 }

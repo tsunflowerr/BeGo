@@ -12,8 +12,8 @@ public class Member
     public double Latitude { get; private set; }
     public double Longitude { get; private set; }
     public TransportMode TransportMode { get; private set; }
+    public Guid? DriverId { get; private set; }
     public DateTime JoinedAt { get; private set; }
-
     public Session? Session { get; private set; }
 
     private Member() { }
@@ -44,4 +44,18 @@ public class Member
     {
         TransportMode = newMode;
     }
+
+    public void SetDriver(Guid driverId)
+    {
+        if (driverId == Id)
+            throw new ArgumentException("Cannot set self as driver.");
+        DriverId = driverId;
+    }
+
+    public void RemoveDriver()
+    {
+        DriverId = null;
+    }
+
+    public bool IsPassenger() => DriverId.HasValue;
 }

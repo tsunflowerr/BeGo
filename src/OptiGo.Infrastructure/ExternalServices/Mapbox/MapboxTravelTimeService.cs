@@ -45,6 +45,23 @@ public class MapboxTravelTimeService : ITravelTimeService
         return result.Durations;
     }
 
+    public async Task<RouteResult> GetRouteAsync(
+        Coordinate origin,
+        Coordinate destination,
+        TransportMode mode,
+        CancellationToken ct = default)
+    {
+        var profile = MapboxTransportModeMapper.ToMapboxProfile(mode);
+        var adjustmentFactor = MapboxTransportModeMapper.GetAdjustmentFactor(mode);
+        var route = await GetSingleRouteAsync(profile, origin, destination, ct);
+
+        return new RouteResult
+        {
+            DurationSeconds = route.DurationSeconds * adjustmentFactor,
+            DistanceMeters = route.DistanceMeters
+        };
+    }
+
     public async Task<TravelMatrixResult> GetTravelMatrixAsync(
         IReadOnlyList<Coordinate> origins,
         IReadOnlyList<Coordinate> destinations,

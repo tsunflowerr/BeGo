@@ -35,6 +35,20 @@ public class GoogleTravelTimeService : ITravelTimeService
         return result.Durations;
     }
 
+    public async Task<RouteResult> GetRouteAsync(
+        Coordinate origin,
+        Coordinate destination,
+        TransportMode mode,
+        CancellationToken ct = default)
+    {
+        var matrixResult = await GetTravelMatrixAsync(new[] { origin }, new[] { destination }, mode, ct);
+        return new RouteResult
+        {
+            DurationSeconds = matrixResult.Durations[0, 0],
+            DistanceMeters = matrixResult.Distances[0, 0]
+        };
+    }
+
     public async Task<TravelMatrixResult> GetTravelMatrixAsync(
         IReadOnlyList<Coordinate> origins,
         IReadOnlyList<Coordinate> destinations,

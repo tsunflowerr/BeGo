@@ -63,10 +63,27 @@ public class FindMeetPointHandler : IRequestHandler<FindMeetPointCommand, FindMe
 
         try
         {
-            var memberLocations = session.Members.Select(m => m.GetLocation()).ToList();
-            var geometricMedian = GeometricMedianCalculator.Calculate(memberLocations);
+            var membersList = session.Members.ToList();
+            var medianMembers = membersList.Select(m => {
+                var passenger = membersList.FirstOrDefault(p => p.DriverId == m.Id);
+                if (passenger != null) return new Member(m.SessionId, m.Name, passenger.GetLocation(), m.TransportMode);
+                return m;
+            }).ToList();
+
+            var geometricMedian = WeightedGeometricMedianCalculator.Calculate(medianMembers);
             _logger.LogInformation("Calculated Geometric Median for Session {Id}: {Lat}, {Lng}",
                 session.Id, geometricMedian.Latitude, geometricMedian.Longitude);
+            var driverRoutes = new Dictionary<Guid, RouteResult>();
+            foreach (var m in membersList)
+            {
+                var passenger = membersList.FirstOrDefault(p => p.DriverId == m.Id);
+                if (passenger != null)
+                {
+                    _logger.LogInformation("Calculating pre-route for driver {Driver} to passenger {Passenger}", m.Name, passenger.Name);
+                    var route = await _travelTimeService.GetRouteAsync(m.GetLocation(), passenger.GetLocation(), m.TransportMode, cancellationToken);
+                    driverRoutes[m.Id] = route;
+                }
+            }
 
             var queryText = (!string.IsNullOrWhiteSpace(request.Category) && request.Category != "cafe")
                 ? request.Category
@@ -96,27 +113,40 @@ public class FindMeetPointHandler : IRequestHandler<FindMeetPointCommand, FindMe
                 topN: FilteredVenueCount);
             var venueLocations = filteredVenues.Select(v => v.GetLocation()).ToList();
 
-            var membersList = session.Members.ToList();
             var durationMatrix = new double[membersList.Count, venueLocations.Count];
             var distanceMatrix = new double[membersList.Count, venueLocations.Count];
 
             var modeGroups = membersList
-                .Select((m, index) => new { Member = m, Index = index })
-                .GroupBy(x => x.Member.TransportMode);
+                .Select((m, index) => {
+                    var passenger = membersList.FirstOrDefault(p => p.DriverId == m.Id);
+                    var driver = membersList.FirstOrDefault(d => d.Id == m.DriverId);
+                    var effectiveMode = driver != null ? driver.TransportMode : m.TransportMode;
+                    var effectiveLoc = passenger != null ? passenger.GetLocation() : m.GetLocation();
+                    return new { Member = m, Index = index, EffectiveMode = effectiveMode, EffectiveLoc = effectiveLoc };
+                })
+                .GroupBy(x => x.EffectiveMode);
 
             foreach (var group in modeGroups)
             {
-                var groupOrigins = group.Select(x => x.Member.GetLocation()).ToList();
+                var groupOrigins = group.Select(x => x.EffectiveLoc).ToList();
                 var matrixResult = await _travelTimeService.GetTravelMatrixAsync(
                     groupOrigins, venueLocations, group.Key, cancellationToken);
 
                 int groupRow = 0;
                 foreach (var item in group)
                 {
+                    double extraDuration = 0;
+                    double extraDistance = 0;
+                    if (driverRoutes.TryGetValue(item.Member.Id, out var route))
+                    {
+                        extraDuration = route.DurationSeconds;
+                        extraDistance = route.DistanceMeters;
+                    }
+
                     for (int v = 0; v < venueLocations.Count; v++)
                     {
-                        durationMatrix[item.Index, v] = matrixResult.Durations[groupRow, v];
-                        distanceMatrix[item.Index, v] = matrixResult.Distances[groupRow, v];
+                        durationMatrix[item.Index, v] = matrixResult.Durations[groupRow, v] + extraDuration;
+                        distanceMatrix[item.Index, v] = matrixResult.Distances[groupRow, v] + extraDistance;
                     }
                     groupRow++;
                 }
