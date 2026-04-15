@@ -4,7 +4,6 @@ namespace OptiGo.Application.Interfaces;
 
 public interface IPlacesProvider
 {
-
     Task<IReadOnlyList<Venue>> SearchNearbyAsync(
         double latitude,
         double longitude,

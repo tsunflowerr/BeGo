@@ -123,7 +123,11 @@ public class FindMeetPointHandler : IRequestHandler<FindMeetPointCommand, FindMe
             }
 
             var currentWeights = ScoringWeights.Default;
-            var topScoredVenues = ScoringEngine.CalculateScores(filteredVenues, durationMatrix, currentWeights, membersList.Count);
+            var topScoredVenues = ScoringEngine.CalculateScores(
+                filteredVenues,
+                durationMatrix,
+                currentWeights,
+                membersList.Count);
 
             var top3Scores = topScoredVenues.Take(FinalVenueCount).ToList();
             var top3VenueHashes = new HashSet<string>(top3Scores.Select(s => s.VenueId));

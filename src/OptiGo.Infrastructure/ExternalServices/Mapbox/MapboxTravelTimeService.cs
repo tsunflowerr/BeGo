@@ -111,6 +111,16 @@ public class MapboxTravelTimeService : ITravelTimeService
         IReadOnlyList<Coordinate> destinations,
         CancellationToken ct)
     {
+        if (origins.Count == 1 && destinations.Count == 1)
+        {
+            var route = await GetSingleRouteAsync(profile, origins[0], destinations[0], ct);
+            return new TravelMatrixResult
+            {
+                Durations = new[,] { { route.DurationSeconds } },
+                Distances = new[,] { { route.DistanceMeters } }
+            };
+        }
+
         var allCoords = origins.Concat(destinations).ToList();
         var coordinatesStr = string.Join(";",
             allCoords.Select(c =>
@@ -178,6 +188,46 @@ public class MapboxTravelTimeService : ITravelTimeService
             Distances = distances
         };
     }
+
+    private async Task<MapboxRouteResult> GetSingleRouteAsync(
+        string profile,
+        Coordinate origin,
+        Coordinate destination,
+        CancellationToken ct)
+    {
+        var coordinates = string.Create(
+            CultureInfo.InvariantCulture,
+            $"{origin.Longitude:F6},{origin.Latitude:F6};{destination.Longitude:F6},{destination.Latitude:F6}");
+
+        var url = $"https://api.mapbox.com/directions/v5/mapbox/{profile}/{coordinates}" +
+                  $"?overview=false" +
+                  $"&alternatives=false" +
+                  $"&steps=false" +
+                  $"&access_token={_options.ApiKey}";
+
+        _logger.LogInformation("Calling Mapbox Directions API fallback for a single origin-destination pair");
+
+        var response = await _httpClient.GetAsync(url, ct);
+        if (!response.IsSuccessStatusCode)
+        {
+            var errorBody = await response.Content.ReadAsStringAsync(ct);
+            throw new InvalidOperationException(
+                $"Mapbox Directions API failed with status {(int)response.StatusCode}: {errorBody}");
+        }
+
+        var result = await response.Content.ReadFromJsonAsync<MapboxDirectionsResponse>(cancellationToken: ct);
+        var route = result?.Routes?.FirstOrDefault();
+        if (route is null)
+        {
+            throw new InvalidOperationException("Mapbox Directions API returned no routes.");
+        }
+
+        return new MapboxRouteResult
+        {
+            DurationSeconds = route.Duration,
+            DistanceMeters = route.Distance
+        };
+    }
 }
 
 internal class MapboxMatrixResponse
@@ -190,4 +240,26 @@ internal class MapboxMatrixResponse
 
     [JsonPropertyName("distances")]
     public List<List<double?>>? Distances { get; set; }
+}
+
+internal class MapboxDirectionsResponse
+{
+    [JsonPropertyName("routes")]
+    public List<MapboxDirectionsRoute>? Routes { get; set; }
+}
+
+internal class MapboxDirectionsRoute
+{
+    [JsonPropertyName("duration")]
+    public double Duration { get; set; }
+
+    [JsonPropertyName("distance")]
+    public double Distance { get; set; }
+}
+
+internal class MapboxRouteResult
+{
+    public double DurationSeconds { get; set; }
+
+    public double DistanceMeters { get; set; }
 }

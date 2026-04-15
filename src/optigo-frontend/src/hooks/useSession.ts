@@ -49,7 +49,7 @@ interface UseSessionReturn {
   
   // Actions
   refreshSession: () => Promise<void>;
-  startOptimization: (category?: string) => Promise<void>;
+  startOptimization: (query?: string) => Promise<void>;
   submitVote: (venueId: string) => Promise<void>;
 }
 
@@ -96,6 +96,8 @@ export function useSession({ sessionId, memberId }: UseSessionOptions): UseSessi
   const handleOptimizationCompleted = useCallback((event: OptimizationCompletedEvent) => {
     setIsComputing(false);
     setOptimizationResult(event.result);
+    setWinningVenueId(null);
+    setHasVoted(false);
     setSession((prev) => prev ? { ...prev, status: SessionStatus.Voting } : null);
     setVotingProgress({ total: members.length, voted: 0 });
   }, [members.length]);
@@ -155,12 +157,14 @@ export function useSession({ sessionId, memberId }: UseSessionOptions): UseSessi
   }, [refreshSession]);
 
   // Start optimization
-  const startOptimization = useCallback(async (category?: string) => {
+  const startOptimization = useCallback(async (query?: string) => {
     try {
       setIsComputing(true);
       setError(null);
-      const result = await api.optimizer.findMeetingPoint(sessionId, category);
+      const result = await api.optimizer.findMeetingPoint(sessionId, query);
       setOptimizationResult(result);
+      setWinningVenueId(null);
+      setHasVoted(false);
       setSession((prev) => prev ? { ...prev, status: SessionStatus.Voting } : null);
       setVotingProgress({ total: members.length, voted: 0 });
     } catch (err) {

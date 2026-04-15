@@ -162,11 +162,11 @@ export const api = {
   },
 
   optimizer: {
-    findMeetingPoint: async (sessionId: string, category?: string): Promise<OptimizationResult> => {
+    findMeetingPoint: async (sessionId: string, query?: string): Promise<OptimizationResult> => {
       const normalizedSessionId = normalizeSessionId(sessionId);
       const url = new URL(`${API_BASE_URL}/api/optimizer/session/${normalizedSessionId}/optimize`);
-      if (category) {
-        url.searchParams.set("category", category);
+      if (query) {
+        url.searchParams.set("category", query);
       }
       const response = await fetch(url.toString(), {
         method: "POST",

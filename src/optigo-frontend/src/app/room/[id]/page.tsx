@@ -1,5 +1,6 @@
 "use client";
 
+import Link from "next/link";
 import { useParams } from "next/navigation";
 import { motion, AnimatePresence } from "framer-motion";
 import { useCallback, useState, useEffect, useRef } from "react";
@@ -16,6 +17,7 @@ import {
   ToastContainer,
   useToasts,
   QueryEditor,
+  AddTestMemberFab,
 } from "@/components";
 import { useSession, useGeolocation } from "@/hooks";
 import { api } from "@/lib/api";
@@ -34,7 +36,7 @@ export default function RoomPage() {
         : "";
 
   // Toast notifications
-  const { toasts, removeToast, success, info, warning } = useToasts();
+  const { toasts, removeToast, success, info } = useToasts();
   const prevMembersCount = useRef(0);
   const prevStatus = useRef<SessionStatus | null>(null);
 
@@ -43,6 +45,7 @@ export default function RoomPage() {
   const [showJoinModal, setShowJoinModal] = useState(false);
   const [selectedVenueId, setSelectedVenueId] = useState<string | null>(null);
   const [hasJoined, setHasJoined] = useState(false);
+  const [isLocalDevUi, setIsLocalDevUi] = useState(false);
 
   // Get geolocation
   const {
@@ -77,6 +80,20 @@ export default function RoomPage() {
 
   // Toast notifications for events
   useEffect(() => {
+    const timer = window.setTimeout(() => {
+      if (process.env.NODE_ENV !== "development") {
+        setIsLocalDevUi(false);
+        return;
+      }
+
+      const hostname = window.location.hostname;
+      setIsLocalDevUi(hostname === "localhost" || hostname === "127.0.0.1");
+    }, 0);
+
+    return () => window.clearTimeout(timer);
+  }, []);
+
+  useEffect(() => {
     // New member joined
     if (members.length > prevMembersCount.current && prevMembersCount.current > 0) {
       const newMember = members[members.length - 1];
@@ -104,16 +121,20 @@ export default function RoomPage() {
   // Check if user has already joined (from localStorage)
   useEffect(() => {
     const storedMemberId = localStorage.getItem(`room-${sessionId}-memberId`);
-    if (storedMemberId) {
-      setMemberId(storedMemberId);
-      setHasJoined(true);
-    } else {
-      // Show join modal after a short delay
-      const timer = setTimeout(() => {
+    const timer = window.setTimeout(
+      () => {
+        if (storedMemberId) {
+          setMemberId(storedMemberId);
+          setHasJoined(true);
+          return;
+        }
+
         setShowJoinModal(true);
-      }, 500);
-      return () => clearTimeout(timer);
-    }
+      },
+      storedMemberId ? 0 : 500
+    );
+
+    return () => window.clearTimeout(timer);
   }, [sessionId]);
 
   // Handle sign out
@@ -143,7 +164,7 @@ export default function RoomPage() {
   // Handle start optimization
   const handleStartOptimization = useCallback(async () => {
     info("🔍 Đang tìm kiếm điểm hẹn tối ưu...");
-    await startOptimization(session?.queryText || "cafe");
+    await startOptimization(session?.queryText || undefined);
   }, [startOptimization, session?.queryText, info]);
 
   // Handle vote
@@ -167,6 +188,12 @@ export default function RoomPage() {
         ])
       )
     : undefined;
+  const canAddTestMembers =
+    isLocalDevUi &&
+    hasJoined &&
+    !!memberId &&
+    isHost &&
+    status === SessionStatus.WaitingForMembers;
 
   // Render loading state
   if (loading) {
@@ -209,7 +236,7 @@ export default function RoomPage() {
             </div>
             <h2 className="text-xl font-semibold text-[#1a1a2e] mb-2">Không tìm thấy phòng</h2>
             <p className="text-[#6b7280] mb-4">{error}</p>
-            <a
+            <Link
               href="/"
               className="inline-flex items-center gap-2 px-6 py-3 bg-[#ff1e00] text-white rounded-xl font-medium hover:bg-[#cc1800] transition-colors"
             >
@@ -217,7 +244,7 @@ export default function RoomPage() {
                 <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M3 12l2-2m0 0l7-7 7 7M5 10v10a1 1 0 001 1h3m10-11l2 2m-2-2v10a1 1 0 01-1 1h-3m-6 0a1 1 0 001-1v-4a1 1 0 011-1h2a1 1 0 011 1v4a1 1 0 001 1m-6 0h6" />
               </svg>
               Về trang chủ
-            </a>
+            </Link>
           </motion.div>
         </main>
       </div>
@@ -278,7 +305,7 @@ export default function RoomPage() {
               initialQuery={session?.queryText || ""}
               isHost={isHost}
               isEditable={status === SessionStatus.WaitingForMembers}
-              onQueryUpdated={refreshSession}
+              onQueryUpdated={() => refreshSession()}
             />
           </div>
 
@@ -428,6 +455,14 @@ export default function RoomPage() {
         locationError={locationError}
         locationLoading={locationLoading}
       />
+
+      {canAddTestMembers && (
+        <AddTestMemberFab
+          sessionId={sessionId}
+          existingMemberCount={members.length}
+          onMemberAdded={refreshSession}
+        />
+      )}
     </div>
   );
 }
