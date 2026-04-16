@@ -37,6 +37,7 @@ public class GetSessionQueryHandler : IRequestHandler<GetSessionQuery, SessionDt
                 Latitude = m.Latitude,
                 Longitude = m.Longitude,
                 TransportMode = m.TransportMode,
+                DriverId = m.DriverId,
                 JoinedAt = m.JoinedAt,
                 IsHost = m.Id == hostMemberId
             }).ToList(),

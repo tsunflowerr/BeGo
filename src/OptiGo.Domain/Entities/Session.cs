@@ -64,6 +64,28 @@ public class Session
         }
     }
 
+    public void SetMemberDriver(Guid memberId, Guid? driverId)
+    {
+        if (Status != SessionStatus.WaitingForMembers)
+            throw new DomainException("Cannot update pickup assignments after computation has started.");
+
+        var member = _members.FirstOrDefault(m => m.Id == memberId);
+        if (member == null)
+            throw new DomainException("Member not found in the session.");
+
+        if (!driverId.HasValue)
+        {
+            member.RemoveDriver();
+            return;
+        }
+
+        var driver = _members.FirstOrDefault(m => m.Id == driverId.Value);
+        if (driver == null)
+            throw new DomainException("Driver not found in the session.");
+
+        member.SetDriver(driver.Id);
+    }
+
     public void ChangeStatus(SessionStatus newStatus)
     {
         if (Status == SessionStatus.Completed)

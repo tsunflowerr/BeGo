@@ -64,25 +64,43 @@ public class FindMeetPointHandler : IRequestHandler<FindMeetPointCommand, FindMe
         try
         {
             var membersList = session.Members.ToList();
-            var medianMembers = membersList.Select(m => {
-                var passenger = membersList.FirstOrDefault(p => p.DriverId == m.Id);
-                if (passenger != null) return new Member(m.SessionId, m.Name, passenger.GetLocation(), m.TransportMode);
-                return m;
-            }).ToList();
+            PickupPairValidator.ValidateOneToOnePairs(membersList);
 
-            var geometricMedian = WeightedGeometricMedianCalculator.Calculate(medianMembers);
-            _logger.LogInformation("Calculated Geometric Median for Session {Id}: {Lat}, {Lng}",
-                session.Id, geometricMedian.Latitude, geometricMedian.Longitude);
+            var memberIndexById = membersList
+                .Select((member, index) => new { member.Id, Index = index })
+                .ToDictionary(item => item.Id, item => item.Index);
+            var passengerByDriverId = membersList
+                .Where(member => member.DriverId.HasValue)
+                .ToDictionary(member => member.DriverId!.Value, member => member);
+            var driverIdByPassengerId = membersList
+                .Where(member => member.DriverId.HasValue)
+                .ToDictionary(member => member.Id, member => member.DriverId!.Value);
+
+            var geometricMedian = WeightedGeometricMedianCalculator.Calculate(membersList);
+            _logger.LogInformation(
+                "Calculated weighted search center for Session {Id}: {Lat}, {Lng}",
+                session.Id,
+                geometricMedian.Latitude,
+                geometricMedian.Longitude);
+
             var driverRoutes = new Dictionary<Guid, RouteResult>();
-            foreach (var m in membersList)
+            foreach (var pair in passengerByDriverId)
             {
-                var passenger = membersList.FirstOrDefault(p => p.DriverId == m.Id);
-                if (passenger != null)
-                {
-                    _logger.LogInformation("Calculating pre-route for driver {Driver} to passenger {Passenger}", m.Name, passenger.Name);
-                    var route = await _travelTimeService.GetRouteAsync(m.GetLocation(), passenger.GetLocation(), m.TransportMode, cancellationToken);
-                    driverRoutes[m.Id] = route;
-                }
+                var driver = membersList[memberIndexById[pair.Key]];
+                var passenger = pair.Value;
+
+                _logger.LogInformation(
+                    "Calculating pickup pre-route for driver {Driver} to passenger {Passenger}",
+                    driver.Name,
+                    passenger.Name);
+
+                var route = await _travelTimeService.GetRouteAsync(
+                    driver.GetLocation(),
+                    passenger.GetLocation(),
+                    driver.TransportMode,
+                    cancellationToken);
+
+                driverRoutes[driver.Id] = route;
             }
 
             var queryText = (!string.IsNullOrWhiteSpace(request.Category) && request.Category != "cafe")
@@ -108,7 +126,7 @@ public class FindMeetPointHandler : IRequestHandler<FindMeetPointCommand, FindMe
             }
 
             var filteredVenues = CandidateFilter.FilterTopCandidates(
-                session.Members.ToList(),
+                membersList,
                 rawVenues,
                 topN: FilteredVenueCount);
             var venueLocations = filteredVenues.Select(v => v.GetLocation()).ToList();
@@ -116,39 +134,53 @@ public class FindMeetPointHandler : IRequestHandler<FindMeetPointCommand, FindMe
             var durationMatrix = new double[membersList.Count, venueLocations.Count];
             var distanceMatrix = new double[membersList.Count, venueLocations.Count];
 
-            var modeGroups = membersList
-                .Select((m, index) => {
-                    var passenger = membersList.FirstOrDefault(p => p.DriverId == m.Id);
-                    var driver = membersList.FirstOrDefault(d => d.Id == m.DriverId);
-                    var effectiveMode = driver != null ? driver.TransportMode : m.TransportMode;
-                    var effectiveLoc = passenger != null ? passenger.GetLocation() : m.GetLocation();
-                    return new { Member = m, Index = index, EffectiveMode = effectiveMode, EffectiveLoc = effectiveLoc };
+            var phaseOneGroups = membersList
+                .Select((member, index) => new { Member = member, Index = index })
+                .Where(item => !item.Member.DriverId.HasValue)
+                .Select(item =>
+                {
+                    passengerByDriverId.TryGetValue(item.Member.Id, out var passenger);
+                    var preRoute = passenger != null ? driverRoutes[item.Member.Id] : null;
+
+                    return new
+                    {
+                        item.Member,
+                        item.Index,
+                        EffectiveMode = item.Member.TransportMode,
+                        EffectiveOrigin = passenger != null ? passenger.GetLocation() : item.Member.GetLocation(),
+                        ExtraDurationSeconds = preRoute?.DurationSeconds ?? 0.0,
+                        ExtraDistanceMeters = preRoute?.DistanceMeters ?? 0.0
+                    };
                 })
                 .GroupBy(x => x.EffectiveMode);
 
-            foreach (var group in modeGroups)
+            foreach (var group in phaseOneGroups)
             {
-                var groupOrigins = group.Select(x => x.EffectiveLoc).ToList();
+                var groupOrigins = group.Select(x => x.EffectiveOrigin).ToList();
                 var matrixResult = await _travelTimeService.GetTravelMatrixAsync(
                     groupOrigins, venueLocations, group.Key, cancellationToken);
 
                 int groupRow = 0;
                 foreach (var item in group)
                 {
-                    double extraDuration = 0;
-                    double extraDistance = 0;
-                    if (driverRoutes.TryGetValue(item.Member.Id, out var route))
-                    {
-                        extraDuration = route.DurationSeconds;
-                        extraDistance = route.DistanceMeters;
-                    }
-
                     for (int v = 0; v < venueLocations.Count; v++)
                     {
-                        durationMatrix[item.Index, v] = matrixResult.Durations[groupRow, v] + extraDuration;
-                        distanceMatrix[item.Index, v] = matrixResult.Distances[groupRow, v] + extraDistance;
+                        durationMatrix[item.Index, v] = matrixResult.Durations[groupRow, v] + item.ExtraDurationSeconds;
+                        distanceMatrix[item.Index, v] = matrixResult.Distances[groupRow, v] + item.ExtraDistanceMeters;
                     }
                     groupRow++;
+                }
+            }
+
+            foreach (var passengerEntry in driverIdByPassengerId)
+            {
+                var passengerIndex = memberIndexById[passengerEntry.Key];
+                var driverIndex = memberIndexById[passengerEntry.Value];
+
+                for (int v = 0; v < venueLocations.Count; v++)
+                {
+                    durationMatrix[passengerIndex, v] = durationMatrix[driverIndex, v];
+                    distanceMatrix[passengerIndex, v] = distanceMatrix[driverIndex, v];
                 }
             }
 

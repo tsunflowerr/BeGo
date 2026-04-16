@@ -26,6 +26,7 @@ public class MemberDto
     public double Latitude { get; init; }
     public double Longitude { get; init; }
     public TransportMode TransportMode { get; init; }
+    public Guid? DriverId { get; init; }
     public DateTime JoinedAt { get; init; }
     public bool IsHost { get; init; }
 }

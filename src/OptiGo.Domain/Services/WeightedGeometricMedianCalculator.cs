@@ -9,10 +9,11 @@ namespace OptiGo.Domain.Services;
 
 public static class WeightedGeometricMedianCalculator
 {
-    private const double EpsilonMeters = 1e-3;
-    private const double ConvergenceThresholdMeters = 1.0;
-    private const int MaxIterations = 100;
+    private const double EpsilonMeters = 1.0;
+    private const double ConvergenceThresholdMeters = 5.0;
+    private const int MaxIterations = 50;
     private const double ReferenceSpeedKmph = 25.0;
+    private const double BlendFactor = 0.35;
 
     public static Coordinate Calculate(IReadOnlyList<Member> members)
     {
@@ -26,30 +27,30 @@ public static class WeightedGeometricMedianCalculator
             .Select(member => new WeightedPoint(member.GetLocation(), GetMemberWeight(member)))
             .ToList();
 
+        var baseline = GeometricMedianCalculator.Calculate(
+            members.Select(member => member.GetLocation()).ToList());
+
         var current = CalculateInitialPoint(weightedPoints);
 
         for (int i = 0; i < MaxIterations; i++)
         {
-            var exactPoint = TryGetExactParticipantPoint(current, weightedPoints);
-            if (exactPoint.HasValue)
-                return exactPoint.Value;
-
             var next = CalculateNextPoint(current, weightedPoints);
 
             if (current.DistanceTo(next) < ConvergenceThresholdMeters)
-                return next;
+                return BlendTowardBaseline(baseline, next);
 
             current = next;
         }
 
-        return current;
+        return BlendTowardBaseline(baseline, current);
     }
 
     private static double GetMemberWeight(Member member)
     {
         var speed = GetModeSpeedKmph(member.TransportMode);
-        var rawWeight = ReferenceSpeedKmph / speed;
-        return Math.Clamp(rawWeight, 0.75, 6.0);
+        var ratio = ReferenceSpeedKmph / speed;
+        var rawWeight = 1.0 + 0.35 * (ratio - 1.0);
+        return Math.Clamp(rawWeight, 0.95, 1.75);
     }
 
     private static double GetModeSpeedKmph(TransportMode mode) => mode switch
@@ -88,15 +89,11 @@ public static class WeightedGeometricMedianCalculator
         return new Coordinate(numeratorLat / denominator, numeratorLng / denominator);
     }
 
-    private static Coordinate? TryGetExactParticipantPoint(Coordinate current, IReadOnlyList<WeightedPoint> points)
+    private static Coordinate BlendTowardBaseline(Coordinate baseline, Coordinate weighted)
     {
-        foreach (var item in points)
-        {
-            if (current.DistanceTo(item.Point) < ConvergenceThresholdMeters)
-                return item.Point;
-        }
-
-        return null;
+        var latitude = baseline.Latitude + (weighted.Latitude - baseline.Latitude) * BlendFactor;
+        var longitude = baseline.Longitude + (weighted.Longitude - baseline.Longitude) * BlendFactor;
+        return new Coordinate(latitude, longitude);
     }
 
     private readonly record struct WeightedPoint(Coordinate Point, double Weight);

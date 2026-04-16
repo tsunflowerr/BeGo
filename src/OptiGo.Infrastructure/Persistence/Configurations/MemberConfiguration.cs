@@ -45,6 +45,9 @@ public class MemberConfiguration : IEntityTypeConfiguration<Member>
             .HasColumnName("joined_at")
             .IsRequired();
 
+        builder.Property(m => m.DriverId)
+            .HasColumnName("driver_id");
+
         builder.HasIndex(m => m.SessionId)
             .HasDatabaseName("idx_members_session");
     }

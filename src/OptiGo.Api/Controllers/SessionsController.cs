@@ -54,6 +54,20 @@ public class SessionsController : ControllerBase
         await _mediator.Send(command);
         return Ok(new { Message = "Query updated successfully" });
     }
+
+    [HttpPut("{id:guid}/members/{memberId:guid}/driver")]
+    public async Task<IActionResult> UpdateMemberDriver(Guid id, Guid memberId, [FromBody] UpdateMemberDriverRequest request)
+    {
+        var command = new UpdateMemberDriverCommand(id, memberId, request.DriverId);
+        await _mediator.Send(command);
+
+        return Ok(new
+        {
+            Message = request.DriverId.HasValue
+                ? "Pickup assignment updated successfully"
+                : "Pickup assignment removed successfully"
+        });
+    }
 }
 
 public class JoinSessionRequest
@@ -67,4 +81,9 @@ public class JoinSessionRequest
 public class UpdateQueryRequest
 {
     public string QueryText { get; set; } = string.Empty;
+}
+
+public class UpdateMemberDriverRequest
+{
+    public Guid? DriverId { get; set; }
 }

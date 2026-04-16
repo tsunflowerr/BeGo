@@ -2,6 +2,7 @@
 using System;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.EntityFrameworkCore.Infrastructure;
+using Microsoft.EntityFrameworkCore.Migrations;
 using Microsoft.EntityFrameworkCore.Storage.ValueConversion;
 using Npgsql.EntityFrameworkCore.PostgreSQL.Metadata;
 using OptiGo.Infrastructure.Persistence;
@@ -11,9 +12,11 @@ using OptiGo.Infrastructure.Persistence;
 namespace OptiGo.Infrastructure.Persistence.Migrations
 {
     [DbContext(typeof(OptiGoDbContext))]
-    partial class OptiGoDbContextModelSnapshot : ModelSnapshot
+    [Migration("20260416151300_AddDriverIdToMember")]
+    partial class AddDriverIdToMember
     {
-        protected override void BuildModel(ModelBuilder modelBuilder)
+        /// <inheritdoc />
+        protected override void BuildTargetModel(ModelBuilder modelBuilder)
         {
 #pragma warning disable 612, 618
             modelBuilder
@@ -29,8 +32,7 @@ namespace OptiGo.Infrastructure.Persistence.Migrations
                         .HasColumnName("id");
 
                     b.Property<Guid?>("DriverId")
-                        .HasColumnType("uuid")
-                        .HasColumnName("driver_id");
+                        .HasColumnType("uuid");
 
                     b.Property<DateTime>("JoinedAt")
                         .HasColumnType("timestamp with time zone")
