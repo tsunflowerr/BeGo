@@ -19,19 +19,13 @@ public static class CandidateFilter
             return rawVenues;
 
         var venueEstimates = new List<(Venue Venue, double EstimateScore)>();
-        PickupPairValidator.ValidateOneToOnePairs(members);
-
-        var memberById = members.ToDictionary(member => member.Id);
-        var passengerByDriverId = members
-            .Where(member => member.DriverId.HasValue)
-            .ToDictionary(member => member.DriverId!.Value, member => member);
 
         foreach (var venue in rawVenues)
         {
             var estimatedTimes = new List<double>();
             foreach (var member in members)
             {
-                estimatedTimes.Add(EstimateTravelSeconds(member, venue, memberById, passengerByDriverId));
+                estimatedTimes.Add(EstimateTravelSeconds(member, venue));
             }
 
             var score = estimatedTimes.Max() + estimatedTimes.Sum();
@@ -48,29 +42,9 @@ public static class CandidateFilter
 
     private static double EstimateTravelSeconds(
         Member member,
-        Venue venue,
-        IReadOnlyDictionary<Guid, Member> memberById,
-        IReadOnlyDictionary<Guid, Member> passengerByDriverId)
+        Venue venue)
     {
-        if (member.DriverId.HasValue)
-        {
-            var driver = memberById[member.DriverId.Value];
-            return EstimatePickupRouteSeconds(driver, member, venue);
-        }
-
-        if (passengerByDriverId.TryGetValue(member.Id, out var passenger))
-            return EstimatePickupRouteSeconds(member, passenger, venue);
-
         return EstimateDirectTravelSeconds(member.GetLocation(), venue.GetLocation(), member.TransportMode);
-    }
-
-    private static double EstimatePickupRouteSeconds(Member driver, Member passenger, Venue venue)
-    {
-        var passengerLocation = passenger.GetLocation();
-        var venueLocation = venue.GetLocation();
-
-        return EstimateDirectTravelSeconds(driver.GetLocation(), passengerLocation, driver.TransportMode)
-            + EstimateDirectTravelSeconds(passengerLocation, venueLocation, driver.TransportMode);
     }
 
     private static double EstimateDirectTravelSeconds(Coordinate origin, Coordinate destination, Enums.TransportMode mode)

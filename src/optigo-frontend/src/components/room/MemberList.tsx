@@ -2,7 +2,7 @@
 
 import { memo } from "react";
 import { motion } from "framer-motion";
-import { Member, transportModeIcons } from "@/types";
+import { Member, MemberMobilityRole, mobilityRoleLabels, transportModeIcons } from "@/types";
 
 interface MemberListProps {
   members: Member[];
@@ -119,11 +119,34 @@ function MemberListComponent({
                     </span>
                   </div>
                 ) : (
-                  <div className="flex items-center gap-1 mt-0.5">
+                  <div className="mt-0.5 flex flex-wrap items-center gap-1.5">
                     <span className="text-sm">{transportModeIcons[member.transportMode]}</span>
-                    <span className="text-xs text-[#6b7280]">
-                      {member.latitude.toFixed(4)}, {member.longitude.toFixed(4)}
-                    </span>
+                    <span className="text-xs text-[#6b7280]">{mobilityRoleLabels[member.mobilityRole]}</span>
+                    {member.canOfferPickup && (
+                      <span className="rounded-full bg-[#59ce8f]/10 px-1.5 py-0.5 text-[10px] font-medium text-[#2b8a57]">
+                        Còn {member.availableSeatCount ?? 0} chỗ
+                      </span>
+                    )}
+                    {!member.canOfferPickup && (
+                      <span className="text-xs text-[#6b7280]">
+                        {member.latitude.toFixed(4)}, {member.longitude.toFixed(4)}
+                      </span>
+                    )}
+                    {member.driverId && (
+                      <span className="rounded-full bg-[#ff1e00]/10 px-1.5 py-0.5 text-[10px] font-medium text-[#ff1e00]">
+                        Đã ghép tài xế
+                      </span>
+                    )}
+                    {!member.driverId && member.mobilityRole === MemberMobilityRole.NeedsPickup && (
+                      <span className="rounded-full bg-[#fff5d6] px-1.5 py-0.5 text-[10px] font-medium text-[#9a6700]">
+                        Chờ nhận đón
+                      </span>
+                    )}
+                    {member.canOfferPickup && (
+                      <span className="text-xs text-[#6b7280]">
+                        {member.latitude.toFixed(4)}, {member.longitude.toFixed(4)}
+                      </span>
+                    )}
                   </div>
                 )}
               </div>

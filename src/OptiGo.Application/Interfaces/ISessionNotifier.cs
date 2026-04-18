@@ -10,6 +10,7 @@ public interface ISessionNotifier
         double latitude,
         double longitude,
         Domain.Enums.TransportMode transportMode,
+        Domain.Enums.MemberMobilityRole mobilityRole,
         DateTime joinedAt,
         bool isHost,
         int totalMembers,
@@ -28,4 +29,8 @@ public interface ISessionNotifier
         CancellationToken ct = default);
 
     Task NotifyVotingCompletedAsync(Guid sessionId, string winningVenueId, CancellationToken ct = default);
+
+    Task NotifyPickupRequestsUpdatedAsync(Guid sessionId, CancellationToken ct = default);
+
+    Task NotifyDepartureLockedAsync(Guid sessionId, CancellationToken ct = default);
 }

@@ -41,6 +41,13 @@ public class MemberConfiguration : IEntityTypeConfiguration<Member>
             .HasMaxLength(20)
             .IsRequired();
 
+        builder.Property(m => m.MobilityRole)
+            .HasColumnName("mobility_role")
+            .HasConversion<string>()
+            .HasMaxLength(20)
+            .HasDefaultValue(MemberMobilityRole.SelfTravel)
+            .IsRequired();
+
         builder.Property(m => m.JoinedAt)
             .HasColumnName("joined_at")
             .IsRequired();

@@ -5,6 +5,7 @@ using OptiGo.Domain.Entities;
 using OptiGo.Domain.Enums;
 using System;
 using System.Linq;
+using System.Text.Json;
 using System.Threading;
 using System.Threading.Tasks;
 
@@ -13,17 +14,23 @@ namespace OptiGo.Application.UseCases;
 public class SubmitVoteHandler : IRequestHandler<SubmitVoteCommand, SubmitVoteResult>
 {
     private readonly ISessionRepository _sessionRepository;
+    private readonly IVenueRepository _venueRepository;
+    private readonly IOutingRoutePlanner _outingRoutePlanner;
     private readonly IUnitOfWork _unitOfWork;
     private readonly ISessionNotifier _notifier;
     private readonly ILogger<SubmitVoteHandler> _logger;
 
     public SubmitVoteHandler(
         ISessionRepository sessionRepository,
+        IVenueRepository venueRepository,
+        IOutingRoutePlanner outingRoutePlanner,
         IUnitOfWork unitOfWork,
         ISessionNotifier notifier,
         ILogger<SubmitVoteHandler> logger)
     {
         _sessionRepository = sessionRepository;
+        _venueRepository = venueRepository;
+        _outingRoutePlanner = outingRoutePlanner;
         _unitOfWork = unitOfWork;
         _notifier = notifier;
         _logger = logger;
@@ -51,16 +58,22 @@ public class SubmitVoteHandler : IRequestHandler<SubmitVoteCommand, SubmitVoteRe
             {
                 _logger.LogInformation("All members voted in Session {SessionId}. Completing session.", session.Id);
 
-                session.ChangeStatus(SessionStatus.Completed);
-                isCompleted = true;
-
                 winningVenueId = session.Votes
                     .GroupBy(v => v.VenueId)
                     .OrderByDescending(g => g.Count())
                     .First()
                     .Key;
 
+                var winningVenue = await _venueRepository.GetByIdAsync(winningVenueId, cancellationToken);
+                if (winningVenue == null)
+                    throw new InvalidOperationException("Winning venue could not be loaded.");
+
+                var finalRoutePreview = await _outingRoutePlanner.PlanVenueAsync(session, winningVenue, cancellationToken);
+
+                session.ChangeStatus(SessionStatus.RoutePreview);
+                session.SetFinalRouteSnapshot(JsonSerializer.Serialize(finalRoutePreview));
                 session.SetWinningVenue(winningVenueId);
+                isCompleted = true;
             }
 
             await _unitOfWork.SaveChangesAsync(cancellationToken);

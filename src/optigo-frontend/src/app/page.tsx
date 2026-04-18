@@ -5,7 +5,7 @@ import { useRouter } from "next/navigation";
 import { Navbar, HeroSection, PhaseButton, CreateRoomModal } from "@/components";
 import { useGeolocation } from "@/hooks";
 import { api } from "@/lib/api";
-import { TransportMode } from "@/types";
+import { MemberMobilityRole, TransportMode } from "@/types";
 
 // Phase icons
 const LocationIcon = () => (
@@ -52,12 +52,14 @@ export default function Home() {
     latitude: number;
     longitude: number;
     transportMode: TransportMode;
+    mobilityRole: MemberMobilityRole;
   }) => {
     const response = await api.sessions.create({
       hostName: data.hostName,
       latitude: data.latitude,
       longitude: data.longitude,
       transportMode: data.transportMode,
+      mobilityRole: data.mobilityRole,
       defaultQuery: data.defaultQuery,
     });
 

@@ -15,6 +15,9 @@ public class Session
     public DateTime CreatedAt { get; private set; }
     public DateTime ExpiresAt { get; private set; }
     public string? WinningVenueId { get; private set; }
+    public string? LatestOptimizationSnapshotJson { get; private set; }
+    public string? FinalRouteSnapshotJson { get; private set; }
+    public DateTime? DepartureLockedAt { get; private set; }
 
     private readonly List<Member> _members = new();
     public IReadOnlyCollection<Member> Members => _members.AsReadOnly();
@@ -24,6 +27,9 @@ public class Session
 
     private readonly List<string> _nominatedVenueIds = new();
     public IReadOnlyCollection<string> NominatedVenueIds => _nominatedVenueIds.AsReadOnly();
+
+    private readonly List<PickupRequest> _pickupRequests = new();
+    public IReadOnlyCollection<PickupRequest> PickupRequests => _pickupRequests.AsReadOnly();
 
     private Session() { }
 
@@ -60,6 +66,12 @@ public class Session
         var member = _members.FirstOrDefault(m => m.Id == memberId);
         if (member != null)
         {
+            var pickupRequest = _pickupRequests.FirstOrDefault(r => r.PassengerId == memberId);
+            if (pickupRequest != null)
+            {
+                _pickupRequests.Remove(pickupRequest);
+            }
+
             _members.Remove(member);
         }
     }
@@ -75,15 +87,116 @@ public class Session
 
         if (!driverId.HasValue)
         {
+            var request = CreateOrGetPickupRequest(member.Id);
+            request.Release();
             member.RemoveDriver();
             return;
         }
 
-        var driver = _members.FirstOrDefault(m => m.Id == driverId.Value);
+        var pickupRequest = CreateOrGetPickupRequest(member.Id);
+        AcceptPickupRequest(pickupRequest.Id, driverId.Value);
+    }
+
+    public PickupRequest CreateOrGetPickupRequest(Guid passengerId)
+    {
+        if (Status != SessionStatus.WaitingForMembers)
+            throw new DomainException("Cannot change pickup requests after computation has started.");
+
+        var passenger = _members.FirstOrDefault(m => m.Id == passengerId);
+        if (passenger == null)
+            throw new DomainException("Passenger not found in the session.");
+
+        if (!passenger.NeedsPickup())
+            throw new DomainException("Only members who need pickup can create pickup requests.");
+
+        var existing = _pickupRequests.FirstOrDefault(r => r.PassengerId == passengerId && r.Status != PickupRequestStatus.Cancelled);
+        if (existing != null)
+            return existing;
+
+        var request = new PickupRequest(Id, passengerId);
+        _pickupRequests.Add(request);
+        passenger.RemoveDriver();
+        return request;
+    }
+
+    public void AcceptPickupRequest(Guid pickupRequestId, Guid driverId)
+    {
+        if (Status != SessionStatus.WaitingForMembers)
+            throw new DomainException("Cannot update pickup assignments after computation has started.");
+
+        var request = _pickupRequests.FirstOrDefault(r => r.Id == pickupRequestId);
+        if (request == null)
+            throw new DomainException("Pickup request not found.");
+
+        var passenger = _members.FirstOrDefault(m => m.Id == request.PassengerId);
+        var driver = _members.FirstOrDefault(m => m.Id == driverId);
+
+        if (passenger == null)
+            throw new DomainException("Passenger not found in the session.");
+
         if (driver == null)
             throw new DomainException("Driver not found in the session.");
 
-        member.SetDriver(driver.Id);
+        if (!driver.CanOfferPickup())
+            throw new DomainException("Selected member cannot offer pickup.");
+
+        if (driver.Id == passenger.Id)
+            throw new DomainException("A driver cannot pick up themselves.");
+
+        var activeAssignments = _pickupRequests.Count(r =>
+            r.AcceptedDriverId == driverId &&
+            r.IsAccepted() &&
+            r.PassengerId != passenger.Id);
+
+        if (activeAssignments >= driver.GetSeatCapacity())
+            throw new DomainException("Driver capacity has been reached.");
+
+        request.Accept(driverId);
+        passenger.SetDriver(driverId);
+    }
+
+    public void ReleasePickupRequest(Guid pickupRequestId)
+    {
+        if (Status != SessionStatus.WaitingForMembers)
+            throw new DomainException("Cannot update pickup assignments after computation has started.");
+
+        var request = _pickupRequests.FirstOrDefault(r => r.Id == pickupRequestId);
+        if (request == null)
+            throw new DomainException("Pickup request not found.");
+
+        request.Release();
+
+        var passenger = _members.FirstOrDefault(m => m.Id == request.PassengerId);
+        passenger?.RemoveDriver();
+    }
+
+    public bool HasPendingPickupRequests()
+    {
+        return _pickupRequests.Any(r => r.IsPending());
+    }
+
+    public int GetAcceptedPassengerCount(Guid driverId)
+    {
+        return _pickupRequests.Count(r => r.AcceptedDriverId == driverId && r.IsAccepted());
+    }
+
+    public void SetLatestOptimizationSnapshot(string? snapshotJson)
+    {
+        LatestOptimizationSnapshotJson = snapshotJson;
+    }
+
+    public void SetFinalRouteSnapshot(string? snapshotJson)
+    {
+        FinalRouteSnapshotJson = snapshotJson;
+    }
+
+    public void LockDeparture()
+    {
+        if (Status != SessionStatus.RoutePreview)
+            throw new DomainException("Can only lock departure from route preview stage.");
+
+        DepartureLockedAt = DateTime.UtcNow;
+        ChangeStatus(SessionStatus.Completed);
     }
 
     public void ChangeStatus(SessionStatus newStatus)
@@ -96,7 +209,10 @@ public class Session
             (SessionStatus.WaitingForMembers, SessionStatus.Computing) => true,
             (SessionStatus.Computing, SessionStatus.Voting) => true,
             (SessionStatus.Computing, SessionStatus.Failed) => true,
-            (SessionStatus.Voting, SessionStatus.Completed) => true,
+            (SessionStatus.Voting, SessionStatus.RoutePreview) => true,
+            (SessionStatus.Voting, SessionStatus.Failed) => true,
+            (SessionStatus.RoutePreview, SessionStatus.Completed) => true,
+            (SessionStatus.RoutePreview, SessionStatus.Failed) => true,
             _ => false
         };
 
@@ -131,8 +247,8 @@ public class Session
 
     public void SetWinningVenue(string? venueId)
     {
-        if (Status != SessionStatus.Completed)
-            throw new DomainException("Can only set winning venue when session is completed.");
+        if (Status != SessionStatus.RoutePreview && Status != SessionStatus.Completed)
+            throw new DomainException("Can only set winning venue once voting has finished.");
 
         WinningVenueId = venueId;
     }

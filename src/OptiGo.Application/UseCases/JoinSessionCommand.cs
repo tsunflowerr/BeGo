@@ -10,7 +10,8 @@ public record JoinSessionCommand(
     string MemberName,
     double Latitude,
     double Longitude,
-    TransportMode TransportMode) : IRequest<Guid>;
+    TransportMode TransportMode,
+    MemberMobilityRole MobilityRole = MemberMobilityRole.SelfTravel) : IRequest<Guid>;
 
 public class JoinSessionHandler : IRequestHandler<JoinSessionCommand, Guid>
 {
@@ -31,9 +32,19 @@ public class JoinSessionHandler : IRequestHandler<JoinSessionCommand, Guid>
         if (session == null) throw new Exception("Session not found");
 
         var coordinate = new Domain.ValueObjects.Coordinate(request.Latitude, request.Longitude);
-        var member = new Member(request.SessionId, request.MemberName, coordinate, request.TransportMode);
+        var member = new Member(
+            request.SessionId,
+            request.MemberName,
+            coordinate,
+            request.TransportMode,
+            request.MobilityRole);
 
         session.AddMember(member);
+        if (member.NeedsPickup())
+        {
+            session.CreateOrGetPickupRequest(member.Id);
+        }
+
         await _unitOfWork.SaveChangesAsync(cancellationToken);
 
         await _notifier.NotifyMemberJoinedAsync(
@@ -43,6 +54,7 @@ public class JoinSessionHandler : IRequestHandler<JoinSessionCommand, Guid>
             member.Latitude,
             member.Longitude,
             member.TransportMode,
+            member.MobilityRole,
             member.JoinedAt,
             session.Members.Count == 1,
             session.Members.Count,

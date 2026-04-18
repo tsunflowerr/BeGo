@@ -6,6 +6,7 @@ using OptiGo.Infrastructure.ExternalServices.Groq;
 using OptiGo.Infrastructure.ExternalServices.Mapbox;
 using OptiGo.Infrastructure.Persistence;
 using OptiGo.Infrastructure.Persistence.Repositories;
+using OptiGo.Infrastructure.Routing;
 
 namespace OptiGo.Infrastructure;
 
@@ -46,6 +47,8 @@ public static class DependencyInjection
         {
             client.Timeout = TimeSpan.FromSeconds(30);
         });
+
+        services.AddScoped<IOutingRoutePlanner, HeuristicOutingRoutePlanner>();
 
         services.Configure<GroqOptions>(configuration.GetSection("Groq"));
         services.AddHttpClient<IAIService, GroqAIService>(client =>

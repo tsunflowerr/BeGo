@@ -29,5 +29,9 @@ public class JoinSessionRequestValidator : AbstractValidator<JoinSessionRequest>
         RuleFor(x => x.TransportMode)
             .IsInEnum()
             .WithMessage("Phương tiện di chuyển không hợp lệ");
+
+        RuleFor(x => x.MobilityRole)
+            .IsInEnum()
+            .WithMessage("Vai trò di chuyển không hợp lệ");
     }
 }

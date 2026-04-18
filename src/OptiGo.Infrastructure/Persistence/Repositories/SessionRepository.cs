@@ -23,6 +23,7 @@ public class SessionRepository : ISessionRepository
         return await _db.Sessions
             .Include(s => s.Members)
             .Include(s => s.Votes)
+            .Include(s => s.PickupRequests)
             .FirstOrDefaultAsync(s => s.Id == id, ct);
     }
 

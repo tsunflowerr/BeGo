@@ -8,6 +8,7 @@ using OptiGo.Application.Interfaces;
 using FluentValidation;
 using FluentValidation.AspNetCore;
 using MediatR;
+using System.Text.Json.Serialization;
 
 Env.Load("../../.env");
 
@@ -17,7 +18,11 @@ var builder = WebApplication.CreateBuilder(args);
 
 builder.Services.AddInfrastructure(builder.Configuration);
 
-builder.Services.AddSignalR();
+builder.Services.AddSignalR()
+    .AddJsonProtocol(options =>
+    {
+        options.PayloadSerializerOptions.Converters.Add(new JsonStringEnumConverter());
+    });
 builder.Services.AddScoped<ISessionNotifier, SignalRSessionNotifier>();
 
 builder.Services.AddMediatR(cfg =>
@@ -29,7 +34,11 @@ builder.Services.AddMediatR(cfg =>
 builder.Services.AddFluentValidationAutoValidation();
 builder.Services.AddValidatorsFromAssemblyContaining<CreateSessionCommandValidator>();
 
-builder.Services.AddControllers();
+builder.Services.AddControllers()
+    .AddJsonOptions(options =>
+    {
+        options.JsonSerializerOptions.Converters.Add(new JsonStringEnumConverter());
+    });
 
 builder.Services.AddOpenApi();
 

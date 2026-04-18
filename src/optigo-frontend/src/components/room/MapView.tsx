@@ -8,6 +8,7 @@ interface MapViewProps {
   members: Member[];
   geometricMedian?: GeometricMedian;
   venues?: Venue[];
+  routePreview?: Venue | null;
   winningVenueId?: string;
   isLoading?: boolean;
   onMemberClick?: (member: Member) => void;
@@ -64,6 +65,7 @@ function MapViewComponent({
   members,
   geometricMedian,
   venues = [],
+  routePreview,
   winningVenueId,
   isLoading = false,
   onMemberClick,
@@ -71,6 +73,7 @@ function MapViewComponent({
   const mapRef = useRef<HTMLDivElement>(null);
   const mapInstanceRef = useRef<google.maps.Map | null>(null);
   const markersRef = useRef<Map<string, google.maps.marker.AdvancedMarkerElement>>(new Map());
+  const polylinesRef = useRef<google.maps.Polyline[]>([]);
   const [mapLoaded, setMapLoaded] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
@@ -129,6 +132,8 @@ function MapViewComponent({
         marker.map = null;
       });
       markers.clear();
+      polylinesRef.current.forEach((polyline) => polyline.setMap(null));
+      polylinesRef.current = [];
     };
   }, []);
 
@@ -143,6 +148,8 @@ function MapViewComponent({
       marker.map = null;
     });
     markersRef.current.clear();
+    polylinesRef.current.forEach((polyline) => polyline.setMap(null));
+    polylinesRef.current = [];
 
     // Add member markers
     members.forEach((member) => {
@@ -246,6 +253,59 @@ function MapViewComponent({
       markersRef.current.set(`venue-${venue.venueId}`, marker);
     });
 
+    const routeColors = ["#ff1e00", "#2b8a57", "#1d4ed8", "#7c3aed"];
+    routePreview?.driverRoutes.forEach((route, routeIndex) => {
+      const color = routeColors[routeIndex % routeColors.length];
+      const path = route.stops.map((stop) => ({ lat: stop.latitude, lng: stop.longitude }));
+
+      if (path.length > 1) {
+        const polyline = new google.maps.Polyline({
+          map,
+          path,
+          strokeColor: color,
+          strokeOpacity: 0.85,
+          strokeWeight: 4,
+          geodesic: true,
+        });
+        polylinesRef.current.push(polyline);
+      }
+
+      route.stops.forEach((stop) => {
+        if (stop.stopType === "destination") {
+          return;
+        }
+
+        const stopElement = document.createElement("div");
+        stopElement.innerHTML = `
+          <div style="
+            width: 28px;
+            height: 28px;
+            border-radius: 999px;
+            background: ${color};
+            color: white;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            font-size: 12px;
+            font-weight: 700;
+            border: 2px solid white;
+            box-shadow: 0 4px 12px rgba(0,0,0,0.2);
+          ">
+            ${stop.sequence}
+          </div>
+        `;
+
+        const stopMarker = new google.maps.marker.AdvancedMarkerElement({
+          map,
+          position: { lat: stop.latitude, lng: stop.longitude },
+          content: stopElement,
+          title: `${route.driverName} - ${stop.label}`,
+        });
+
+        markersRef.current.set(`route-stop-${route.driverId}-${stop.sequence}`, stopMarker);
+      });
+    });
+
     // Add geometric median marker
     if (geometricMedian) {
       const medianElement = document.createElement("div");
@@ -271,7 +331,7 @@ function MapViewComponent({
     }
 
     // Fit bounds
-    if (members.length > 0 || venues.length > 0) {
+    if (members.length > 0 || venues.length > 0 || (routePreview?.driverRoutes.length ?? 0) > 0) {
       const bounds = new google.maps.LatLngBounds();
       members.forEach((m) => {
         if (m.latitude && m.longitude) {
@@ -284,9 +344,12 @@ function MapViewComponent({
       if (geometricMedian) {
         bounds.extend({ lat: geometricMedian.latitude, lng: geometricMedian.longitude });
       }
+      routePreview?.driverRoutes.forEach((route) => {
+        route.stops.forEach((stop) => bounds.extend({ lat: stop.latitude, lng: stop.longitude }));
+      });
       map.fitBounds(bounds, 50);
     }
-  }, [members, venues, geometricMedian, winningVenueId, mapLoaded, onMemberClick]);
+  }, [members, venues, geometricMedian, winningVenueId, routePreview, mapLoaded, onMemberClick]);
 
   return (
     <div className="relative w-full h-full min-h-[300px] rounded-2xl overflow-hidden bg-[#e8f9fd]">

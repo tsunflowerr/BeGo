@@ -12,13 +12,19 @@ public class Member
     public double Latitude { get; private set; }
     public double Longitude { get; private set; }
     public TransportMode TransportMode { get; private set; }
+    public MemberMobilityRole MobilityRole { get; private set; }
     public Guid? DriverId { get; private set; }
     public DateTime JoinedAt { get; private set; }
     public Session? Session { get; private set; }
 
     private Member() { }
 
-    public Member(Guid sessionId, string name, Coordinate location, TransportMode transportMode = TransportMode.Motorbike)
+    public Member(
+        Guid sessionId,
+        string name,
+        Coordinate location,
+        TransportMode transportMode = TransportMode.Motorbike,
+        MemberMobilityRole mobilityRole = MemberMobilityRole.SelfTravel)
     {
         Id = Guid.NewGuid();
         SessionId = sessionId;
@@ -26,6 +32,7 @@ public class Member
         Latitude = location.Latitude;
         Longitude = location.Longitude;
         TransportMode = transportMode;
+        MobilityRole = mobilityRole;
         JoinedAt = DateTime.UtcNow;
     }
 
@@ -45,6 +52,17 @@ public class Member
         TransportMode = newMode;
     }
 
+    public void UpdateMobility(MemberMobilityRole role, TransportMode transportMode)
+    {
+        MobilityRole = role;
+        TransportMode = transportMode;
+
+        if (role != MemberMobilityRole.NeedsPickup)
+        {
+            DriverId = null;
+        }
+    }
+
     public void SetDriver(Guid driverId)
     {
         if (driverId == Id)
@@ -58,4 +76,12 @@ public class Member
     }
 
     public bool IsPassenger() => DriverId.HasValue;
+
+    public bool NeedsPickup() => MobilityRole == MemberMobilityRole.NeedsPickup;
+
+    public bool CanOfferPickup() =>
+        MobilityRole == MemberMobilityRole.SelfTravel &&
+        TransportCapacityDefaults.GetSeatCapacity(TransportMode) > 0;
+
+    public int GetSeatCapacity() => TransportCapacityDefaults.GetSeatCapacity(TransportMode);
 }

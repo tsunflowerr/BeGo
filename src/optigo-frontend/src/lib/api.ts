@@ -1,6 +1,7 @@
 import {
   Session,
   TransportMode,
+  MemberMobilityRole,
   OptimizationResult,
   VoteResponse,
 } from "@/types";
@@ -12,6 +13,7 @@ interface CreateSessionRequest {
   latitude: number;
   longitude: number;
   transportMode: TransportMode;
+  mobilityRole?: MemberMobilityRole;
   defaultQuery?: string;
 }
 
@@ -25,6 +27,7 @@ interface JoinSessionRequest {
   latitude: number;
   longitude: number;
   transportMode: TransportMode;
+  mobilityRole?: MemberMobilityRole;
 }
 
 interface JoinSessionResponse {
@@ -156,6 +159,40 @@ export const api = {
           "Content-Type": "application/json",
         },
         body: JSON.stringify({ queryText }),
+      });
+      await handleResponse<{ message: string }>(response);
+    },
+
+    acceptPickupRequest: async (sessionId: string, requestId: string, driverId: string): Promise<void> => {
+      const normalizedSessionId = normalizeSessionId(sessionId);
+      const response = await fetch(`${API_BASE_URL}/api/sessions/${normalizedSessionId}/pickup-requests/${requestId}/accept`, {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify({ driverId }),
+      });
+      await handleResponse<{ message: string }>(response);
+    },
+
+    releasePickupRequest: async (sessionId: string, requestId: string): Promise<void> => {
+      const normalizedSessionId = normalizeSessionId(sessionId);
+      const response = await fetch(`${API_BASE_URL}/api/sessions/${normalizedSessionId}/pickup-requests/${requestId}/release`, {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+        },
+      });
+      await handleResponse<{ message: string }>(response);
+    },
+
+    lockDeparture: async (sessionId: string): Promise<void> => {
+      const normalizedSessionId = normalizeSessionId(sessionId);
+      const response = await fetch(`${API_BASE_URL}/api/sessions/${normalizedSessionId}/departure/lock`, {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+        },
       });
       await handleResponse<{ message: string }>(response);
     },

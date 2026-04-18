@@ -5,6 +5,7 @@ using OptiGo.Domain.Entities;
 using OptiGo.Domain.Enums;
 using OptiGo.Domain.Services;
 using OptiGo.Domain.ValueObjects;
+using System.Text.Json;
 
 namespace OptiGo.Application.UseCases;
 
@@ -20,6 +21,7 @@ public class FindMeetPointHandler : IRequestHandler<FindMeetPointCommand, FindMe
     private readonly IPlacesProvider _placesProvider;
     private readonly ITravelTimeService _travelTimeService;
     private readonly IAIService _aiService;
+    private readonly IOutingRoutePlanner _outingRoutePlanner;
     private readonly IUnitOfWork _unitOfWork;
     private readonly ISessionNotifier _notifier;
     private readonly ILogger<FindMeetPointHandler> _logger;
@@ -30,6 +32,7 @@ public class FindMeetPointHandler : IRequestHandler<FindMeetPointCommand, FindMe
         IPlacesProvider placesProvider,
         ITravelTimeService travelTimeService,
         IAIService aiService,
+        IOutingRoutePlanner outingRoutePlanner,
         IUnitOfWork unitOfWork,
         ISessionNotifier notifier,
         ILogger<FindMeetPointHandler> logger)
@@ -39,6 +42,7 @@ public class FindMeetPointHandler : IRequestHandler<FindMeetPointCommand, FindMe
         _placesProvider = placesProvider;
         _travelTimeService = travelTimeService;
         _aiService = aiService;
+        _outingRoutePlanner = outingRoutePlanner;
         _unitOfWork = unitOfWork;
         _notifier = notifier;
         _logger = logger;
@@ -57,6 +61,15 @@ public class FindMeetPointHandler : IRequestHandler<FindMeetPointCommand, FindMe
             return new FindMeetPointResult { IsSuccess = false, ErrorMessage = "Session has no members." };
         }
 
+        if (session.HasPendingPickupRequests())
+        {
+            return new FindMeetPointResult
+            {
+                IsSuccess = false,
+                ErrorMessage = "Please resolve all pickup requests before optimizing venues."
+            };
+        }
+
         session.ChangeStatus(SessionStatus.Computing);
         await _unitOfWork.SaveChangesAsync(cancellationToken);
         await _notifier.NotifyComputingStartedAsync(session.Id, cancellationToken);
@@ -64,44 +77,12 @@ public class FindMeetPointHandler : IRequestHandler<FindMeetPointCommand, FindMe
         try
         {
             var membersList = session.Members.ToList();
-            PickupPairValidator.ValidateOneToOnePairs(membersList);
-
-            var memberIndexById = membersList
-                .Select((member, index) => new { member.Id, Index = index })
-                .ToDictionary(item => item.Id, item => item.Index);
-            var passengerByDriverId = membersList
-                .Where(member => member.DriverId.HasValue)
-                .ToDictionary(member => member.DriverId!.Value, member => member);
-            var driverIdByPassengerId = membersList
-                .Where(member => member.DriverId.HasValue)
-                .ToDictionary(member => member.Id, member => member.DriverId!.Value);
-
             var geometricMedian = WeightedGeometricMedianCalculator.Calculate(membersList);
             _logger.LogInformation(
                 "Calculated weighted search center for Session {Id}: {Lat}, {Lng}",
                 session.Id,
                 geometricMedian.Latitude,
                 geometricMedian.Longitude);
-
-            var driverRoutes = new Dictionary<Guid, RouteResult>();
-            foreach (var pair in passengerByDriverId)
-            {
-                var driver = membersList[memberIndexById[pair.Key]];
-                var passenger = pair.Value;
-
-                _logger.LogInformation(
-                    "Calculating pickup pre-route for driver {Driver} to passenger {Passenger}",
-                    driver.Name,
-                    passenger.Name);
-
-                var route = await _travelTimeService.GetRouteAsync(
-                    driver.GetLocation(),
-                    passenger.GetLocation(),
-                    driver.TransportMode,
-                    cancellationToken);
-
-                driverRoutes[driver.Id] = route;
-            }
 
             var queryText = (!string.IsNullOrWhiteSpace(request.Category) && request.Category != "cafe")
                 ? request.Category
@@ -129,90 +110,36 @@ public class FindMeetPointHandler : IRequestHandler<FindMeetPointCommand, FindMe
                 membersList,
                 rawVenues,
                 topN: FilteredVenueCount);
-            var venueLocations = filteredVenues.Select(v => v.GetLocation()).ToList();
-
-            var durationMatrix = new double[membersList.Count, venueLocations.Count];
-            var distanceMatrix = new double[membersList.Count, venueLocations.Count];
-
-            var phaseOneGroups = membersList
-                .Select((member, index) => new { Member = member, Index = index })
-                .Where(item => !item.Member.DriverId.HasValue)
-                .Select(item =>
-                {
-                    passengerByDriverId.TryGetValue(item.Member.Id, out var passenger);
-                    var preRoute = passenger != null ? driverRoutes[item.Member.Id] : null;
-
-                    return new
-                    {
-                        item.Member,
-                        item.Index,
-                        EffectiveMode = item.Member.TransportMode,
-                        EffectiveOrigin = passenger != null ? passenger.GetLocation() : item.Member.GetLocation(),
-                        ExtraDurationSeconds = preRoute?.DurationSeconds ?? 0.0,
-                        ExtraDistanceMeters = preRoute?.DistanceMeters ?? 0.0
-                    };
-                })
-                .GroupBy(x => x.EffectiveMode);
-
-            foreach (var group in phaseOneGroups)
+            var plannedCandidates = new List<CandidateResultDto>();
+            foreach (var venue in filteredVenues)
             {
-                var groupOrigins = group.Select(x => x.EffectiveOrigin).ToList();
-                var matrixResult = await _travelTimeService.GetTravelMatrixAsync(
-                    groupOrigins, venueLocations, group.Key, cancellationToken);
-
-                int groupRow = 0;
-                foreach (var item in group)
-                {
-                    for (int v = 0; v < venueLocations.Count; v++)
-                    {
-                        durationMatrix[item.Index, v] = matrixResult.Durations[groupRow, v] + item.ExtraDurationSeconds;
-                        distanceMatrix[item.Index, v] = matrixResult.Distances[groupRow, v] + item.ExtraDistanceMeters;
-                    }
-                    groupRow++;
-                }
+                plannedCandidates.Add(await _outingRoutePlanner.PlanVenueAsync(session, venue, cancellationToken));
             }
 
-            foreach (var passengerEntry in driverIdByPassengerId)
-            {
-                var passengerIndex = memberIndexById[passengerEntry.Key];
-                var driverIndex = memberIndexById[passengerEntry.Value];
-
-                for (int v = 0; v < venueLocations.Count; v++)
-                {
-                    durationMatrix[passengerIndex, v] = durationMatrix[driverIndex, v];
-                    distanceMatrix[passengerIndex, v] = distanceMatrix[driverIndex, v];
-                }
-            }
-
-            var currentWeights = ScoringWeights.Default;
-            var topScoredVenues = ScoringEngine.CalculateScores(
-                filteredVenues,
-                durationMatrix,
-                currentWeights,
-                membersList.Count);
-
-            var top3Scores = topScoredVenues.Take(FinalVenueCount).ToList();
-            var top3VenueHashes = new HashSet<string>(top3Scores.Select(s => s.VenueId));
+            var scoredCandidates = ScoreCandidates(plannedCandidates).Take(FinalVenueCount).ToList();
+            var top3VenueHashes = new HashSet<string>(scoredCandidates.Select(s => s.VenueId));
             var top3VenueEntities = filteredVenues.Where(v => top3VenueHashes.Contains(v.Id)).ToList();
 
             await _venueRepository.AddRangeAsync(top3VenueEntities, cancellationToken);
-            session.SetNominatedVenues(top3Scores.Select(s => s.VenueId));
+            session.SetNominatedVenues(scoredCandidates.Select(s => s.VenueId));
 
             session.ChangeStatus(SessionStatus.Voting);
-            await _unitOfWork.SaveChangesAsync(cancellationToken);
+            var top3Result = await EnrichTop3VenuesAsync(scoredCandidates, top3VenueEntities, cancellationToken);
 
-            var top3Result = await EnrichTop3VenuesAsync(
-                top3Scores, top3VenueEntities, filteredVenues, membersList,
-                durationMatrix, distanceMatrix, cancellationToken);
-
-            await _notifier.NotifyOptimizationCompletedAsync(session.Id, top3Result, cancellationToken);
-
-            return new FindMeetPointResult
+            var snapshot = new FindMeetPointResult
             {
                 IsSuccess = true,
                 GeometricMedian = geometricMedian,
                 TopVenues = top3Result
             };
+            session.SetLatestOptimizationSnapshot(JsonSerializer.Serialize(snapshot));
+            session.SetFinalRouteSnapshot(null);
+
+            await _unitOfWork.SaveChangesAsync(cancellationToken);
+
+            await _notifier.NotifyOptimizationCompletedAsync(session.Id, snapshot, cancellationToken);
+
+            return snapshot;
         }
         catch (Exception ex)
         {
@@ -224,12 +151,8 @@ public class FindMeetPointHandler : IRequestHandler<FindMeetPointCommand, FindMe
     }
 
     private async Task<List<CandidateResultDto>> EnrichTop3VenuesAsync(
-        List<CandidateScore> top3Scores,
+        List<CandidateResultDto> top3Scores,
         List<Venue> top3VenueEntities,
-        IReadOnlyList<Venue> filteredVenues,
-        List<Member> membersList,
-        double[,] durationMatrix,
-        double[,] distanceMatrix,
         CancellationToken cancellationToken)
     {
         var results = new List<CandidateResultDto>();
@@ -259,27 +182,7 @@ public class FindMeetPointHandler : IRequestHandler<FindMeetPointCommand, FindMe
             var score = top3Scores[i];
             var venue = top3VenueEntities.First(v => v.Id == score.VenueId);
 
-            int venueIndex = -1;
-            for (int j = 0; j < filteredVenues.Count; j++)
-            {
-                if (filteredVenues[j].Id == venue.Id)
-                {
-                    venueIndex = j;
-                    break;
-                }
-            }
-
-            if (venueIndex == -1) continue;
-
             detailsDict.TryGetValue(venue.Id, out var placeDetail);
-
-            var memberRoutes = membersList.Select((member, memberIdx) => new MemberRouteDto
-            {
-                MemberId = member.Id,
-                MemberName = member.Name,
-                EstimatedTimeSeconds = durationMatrix[memberIdx, venueIndex],
-                DistanceMeters = distanceMatrix[memberIdx, venueIndex]
-            }).ToList();
 
             results.Add(new CandidateResultDto
             {
@@ -293,7 +196,10 @@ public class FindMeetPointHandler : IRequestHandler<FindMeetPointCommand, FindMe
                 ReviewCount = venue.ReviewCount,
                 TotalTimeSeconds = score.TotalTimeSeconds,
                 FinalScore = score.FinalScore,
-                MemberRoutes = memberRoutes,
+                MaxDriverDetourSeconds = score.MaxDriverDetourSeconds,
+                TotalWalkingDistanceMeters = score.TotalWalkingDistanceMeters,
+                MemberRoutes = score.MemberRoutes,
+                DriverRoutes = score.DriverRoutes,
                 PhotoUrls = placeDetail?.PhotoUrls ?? new List<string>(),
                 AiReviewSummary = aiSummaries[i],
                 TopReviews = placeDetail?.Reviews.Select(r => new ReviewDto
@@ -307,5 +213,70 @@ public class FindMeetPointHandler : IRequestHandler<FindMeetPointCommand, FindMe
         }
 
         return results;
+    }
+
+    private static List<CandidateResultDto> ScoreCandidates(IReadOnlyList<CandidateResultDto> candidates)
+    {
+        if (candidates.Count == 0)
+            return [];
+
+        var stats = candidates.Select(candidate =>
+        {
+            var times = candidate.MemberRoutes.Select(route => route.EstimatedTimeSeconds).ToList();
+            var meanTime = times.Count == 0 ? 0 : times.Average();
+            var stdDev = times.Count == 0
+                ? 0
+                : Math.Sqrt(times.Sum(time => Math.Pow(time - meanTime, 2)) / times.Count);
+
+            return new
+            {
+                Candidate = candidate,
+                candidate.TotalTimeSeconds,
+                Fairness = stdDev,
+                candidate.MaxDriverDetourSeconds,
+                candidate.TotalWalkingDistanceMeters,
+                QualityPenalty = candidate.Rating > 0 ? 5.0 - candidate.Rating : 2.0
+            };
+        }).ToList();
+
+        var minTotal = stats.Min(x => x.TotalTimeSeconds);
+        var maxTotal = stats.Max(x => x.TotalTimeSeconds);
+        var minFairness = stats.Min(x => x.Fairness);
+        var maxFairness = stats.Max(x => x.Fairness);
+        var minDetour = stats.Min(x => x.MaxDriverDetourSeconds);
+        var maxDetour = stats.Max(x => x.MaxDriverDetourSeconds);
+        var minWalking = stats.Min(x => x.TotalWalkingDistanceMeters);
+        var maxWalking = stats.Max(x => x.TotalWalkingDistanceMeters);
+        var minQuality = stats.Min(x => x.QualityPenalty);
+        var maxQuality = stats.Max(x => x.QualityPenalty);
+
+        foreach (var stat in stats)
+        {
+            var normalizedTotal = Normalize(stat.TotalTimeSeconds, minTotal, maxTotal);
+            var normalizedFairness = Normalize(stat.Fairness, minFairness, maxFairness);
+            var normalizedDetour = Normalize(stat.MaxDriverDetourSeconds, minDetour, maxDetour);
+            var normalizedWalking = Normalize(stat.TotalWalkingDistanceMeters, minWalking, maxWalking);
+            var normalizedQuality = Normalize(stat.QualityPenalty, minQuality, maxQuality);
+
+            stat.Candidate.FinalScore =
+                normalizedTotal * 0.45 +
+                normalizedDetour * 0.20 +
+                normalizedFairness * 0.15 +
+                normalizedWalking * 0.10 +
+                normalizedQuality * 0.10;
+        }
+
+        return stats
+            .Select(x => x.Candidate)
+            .OrderBy(candidate => candidate.FinalScore)
+            .ToList();
+    }
+
+    private static double Normalize(double value, double min, double max)
+    {
+        if (Math.Abs(max - min) < 0.0001)
+            return 0;
+
+        return (value - min) / (max - min);
     }
 }

@@ -25,10 +25,13 @@ public class CandidateResultDto
     public int ReviewCount { get; set; }
     public double TotalTimeSeconds { get; set; }
     public double FinalScore { get; set; }
+    public double MaxDriverDetourSeconds { get; set; }
+    public double TotalWalkingDistanceMeters { get; set; }
     public List<string> PhotoUrls { get; set; } = new();
     public string? AiReviewSummary { get; set; }
     public List<ReviewDto> TopReviews { get; set; } = new();
     public List<MemberRouteDto> MemberRoutes { get; set; } = new();
+    public List<DriverRouteDto> DriverRoutes { get; set; } = new();
 }
 public class ReviewDto
 {
@@ -44,4 +47,6 @@ public class MemberRouteDto
     public string MemberName { get; set; } = null!;
     public double EstimatedTimeSeconds { get; set; }
     public double DistanceMeters { get; set; }
+    public Guid? DriverId { get; set; }
+    public double WalkingDistanceMeters { get; set; }
 }

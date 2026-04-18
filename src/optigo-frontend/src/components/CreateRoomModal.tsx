@@ -3,6 +3,7 @@
 import { memo, useState, useCallback, useEffect, useRef } from "react";
 import { motion, AnimatePresence } from "framer-motion";
 import * as yup from "yup";
+import { MemberMobilityRole, TransportMode } from "@/types";
 
 interface CreateRoomModalProps {
   isOpen: boolean;
@@ -13,6 +14,7 @@ interface CreateRoomModalProps {
     latitude: number;
     longitude: number;
     transportMode: number;
+    mobilityRole: MemberMobilityRole;
   }) => Promise<void>;
   initialLocation?: {
     latitude: number;
@@ -47,7 +49,8 @@ function CreateRoomModalComponent({
 }: CreateRoomModalProps) {
   const [hostName, setHostName] = useState("");
   const [defaultQuery, setDefaultQuery] = useState("");
-  const [transportMode, setTransportMode] = useState(2);
+  const [mobilityRole, setMobilityRole] = useState<MemberMobilityRole>(MemberMobilityRole.SelfTravel);
+  const [transportMode, setTransportMode] = useState(TransportMode.Motorbike);
   const [isLoading, setIsLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const inputRef = useRef<HTMLInputElement>(null);
@@ -64,7 +67,8 @@ function CreateRoomModalComponent({
     if (!isOpen) {
       setHostName("");
       setDefaultQuery("");
-      setTransportMode(2);
+      setMobilityRole(MemberMobilityRole.SelfTravel);
+      setTransportMode(TransportMode.Motorbike);
       setError(null);
     }
   }, [isOpen]);
@@ -86,7 +90,8 @@ function CreateRoomModalComponent({
         defaultQuery: data.defaultQuery || "",
         latitude: initialLocation.latitude,
         longitude: initialLocation.longitude,
-        transportMode,
+        transportMode: mobilityRole === MemberMobilityRole.NeedsPickup ? TransportMode.Walking : transportMode,
+        mobilityRole,
       });
     } catch (err) {
       if (err instanceof yup.ValidationError) {
@@ -97,7 +102,7 @@ function CreateRoomModalComponent({
     } finally {
       setIsLoading(false);
     }
-  }, [hostName, defaultQuery, onSubmit]);
+  }, [hostName, defaultQuery, onSubmit, initialLocation, mobilityRole, transportMode]);
 
   const handleBackdropClick = useCallback((e: React.MouseEvent) => {
     if (e.target === e.currentTarget && !isLoading) {
@@ -181,23 +186,52 @@ function CreateRoomModalComponent({
               </div>
 
               <div>
-                <label htmlFor="transportMode" className="block text-sm font-medium text-[#1a1a2e] mb-2">
-                  Phương tiện di chuyển
+                <label className="block text-sm font-medium text-[#1a1a2e] mb-2">
+                  Vai trò di chuyển
                 </label>
-                <select
-                  id="transportMode"
-                  value={transportMode}
-                  onChange={(e) => setTransportMode(Number(e.target.value))}
-                  disabled={isLoading}
-                  className="w-full px-4 py-3 rounded-xl border-2 border-[#e8f9fd] bg-[#e8f9fd]/30 text-[#1a1a2e] focus:border-[#ff1e00] focus:outline-none focus:ring-2 focus:ring-[#ff1e00]/20 transition-all disabled:opacity-50"
-                >
-                  <option value={0}>Đi bộ</option>
-                  <option value={1}>Xe đạp</option>
-                  <option value={2}>Xe máy</option>
-                  <option value={3}>Ô tô</option>
-                  <option value={4}>Xe buýt</option>
-                </select>
+                <div className="grid grid-cols-2 gap-3">
+                  {[
+                    { role: MemberMobilityRole.SelfTravel, title: "Tự di chuyển", description: "Bạn có thể tự đi và nhận đón thêm nếu có xe" },
+                    { role: MemberMobilityRole.NeedsPickup, title: "Cần được đón", description: "Tạo phòng nhưng vẫn chờ người khác nhận đón" },
+                  ].map((option) => (
+                    <button
+                      key={option.role}
+                      type="button"
+                      onClick={() => setMobilityRole(option.role)}
+                      disabled={isLoading}
+                      className={`rounded-xl border p-3 text-left transition-colors ${
+                        mobilityRole === option.role
+                          ? "border-[#ff1e00] bg-[#ff1e00]/5"
+                          : "border-[#e8f9fd] bg-[#e8f9fd]/30 hover:border-[#ff1e00]/30"
+                      }`}
+                    >
+                      <p className="text-sm font-semibold text-[#1a1a2e]">{option.title}</p>
+                      <p className="mt-1 text-xs text-[#6b7280]">{option.description}</p>
+                    </button>
+                  ))}
+                </div>
               </div>
+
+              {mobilityRole === MemberMobilityRole.SelfTravel && (
+                <div>
+                  <label htmlFor="transportMode" className="block text-sm font-medium text-[#1a1a2e] mb-2">
+                    Phương tiện di chuyển
+                  </label>
+                  <select
+                    id="transportMode"
+                    value={transportMode}
+                    onChange={(e) => setTransportMode(Number(e.target.value) as TransportMode)}
+                    disabled={isLoading}
+                    className="w-full px-4 py-3 rounded-xl border-2 border-[#e8f9fd] bg-[#e8f9fd]/30 text-[#1a1a2e] focus:border-[#ff1e00] focus:outline-none focus:ring-2 focus:ring-[#ff1e00]/20 transition-all disabled:opacity-50"
+                  >
+                    <option value={TransportMode.Walking}>Đi bộ</option>
+                    <option value={TransportMode.Cycling}>Xe đạp</option>
+                    <option value={TransportMode.Motorbike}>Xe máy</option>
+                    <option value={TransportMode.Car}>Ô tô</option>
+                    <option value={TransportMode.Bus}>Xe buýt</option>
+                  </select>
+                </div>
+              )}
 
               <div className="rounded-xl border border-[#e8f9fd] bg-[#e8f9fd]/30 p-4">
                 <div className="flex items-center justify-between gap-3">

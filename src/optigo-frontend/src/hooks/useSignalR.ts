@@ -9,6 +9,8 @@ import {
   OptimizationCompletedEvent,
   VoteSubmittedEvent,
   VotingCompletedEvent,
+  PickupRequestsUpdatedEvent,
+  DepartureLockedEvent,
   SignalRError,
 } from "@/types";
 
@@ -21,6 +23,8 @@ interface UseSignalROptions {
   onOptimizationCompleted?: (event: OptimizationCompletedEvent) => void;
   onVoteSubmitted?: (event: VoteSubmittedEvent) => void;
   onVotingCompleted?: (event: VotingCompletedEvent) => void;
+  onPickupRequestsUpdated?: (event: PickupRequestsUpdatedEvent) => void;
+  onDepartureLocked?: (event: DepartureLockedEvent) => void;
   onError?: (error: SignalRError) => void;
 }
 
@@ -31,6 +35,8 @@ export function useSignalR({
   onOptimizationCompleted,
   onVoteSubmitted,
   onVotingCompleted,
+  onPickupRequestsUpdated,
+  onDepartureLocked,
   onError,
 }: UseSignalROptions) {
   const [connectionState, setConnectionState] = useState<ConnectionState>("disconnected");
@@ -83,6 +89,18 @@ export function useSignalR({
       }
     });
 
+    connection.on("PickupRequestsUpdated", (event: PickupRequestsUpdatedEvent) => {
+      if (mountedRef.current && onPickupRequestsUpdated) {
+        onPickupRequestsUpdated(event);
+      }
+    });
+
+    connection.on("DepartureLocked", (event: DepartureLockedEvent) => {
+      if (mountedRef.current && onDepartureLocked) {
+        onDepartureLocked(event);
+      }
+    });
+
     connection.on("Error", (error: SignalRError) => {
       if (mountedRef.current && onError) {
         onError(error);
@@ -128,7 +146,7 @@ export function useSignalR({
         setConnectionState("disconnected");
       }
     }
-  }, [sessionId, onMemberJoined, onComputingStarted, onOptimizationCompleted, onVoteSubmitted, onVotingCompleted, onError]);
+  }, [sessionId, onMemberJoined, onComputingStarted, onOptimizationCompleted, onVoteSubmitted, onVotingCompleted, onPickupRequestsUpdated, onDepartureLocked, onError]);
 
   const disconnect = useCallback(async () => {
     if (connectionRef.current) {

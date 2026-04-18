@@ -1,37 +1,38 @@
 using MediatR;
 using OptiGo.Application.Interfaces;
 using OptiGo.Domain.Exceptions;
-using OptiGo.Domain.Services;
 
 namespace OptiGo.Application.UseCases;
 
-public record UpdateMemberDriverCommand(Guid SessionId, Guid MemberId, Guid? DriverId) : IRequest<Unit>;
+public record LockDepartureCommand(Guid SessionId) : IRequest<Unit>;
 
-public class UpdateMemberDriverHandler : IRequestHandler<UpdateMemberDriverCommand, Unit>
+public class LockDepartureHandler : IRequestHandler<LockDepartureCommand, Unit>
 {
     private readonly ISessionRepository _sessionRepository;
     private readonly IUnitOfWork _unitOfWork;
     private readonly ISessionNotifier _notifier;
 
-    public UpdateMemberDriverHandler(ISessionRepository sessionRepository, IUnitOfWork unitOfWork, ISessionNotifier notifier)
+    public LockDepartureHandler(
+        ISessionRepository sessionRepository,
+        IUnitOfWork unitOfWork,
+        ISessionNotifier notifier)
     {
         _sessionRepository = sessionRepository;
         _unitOfWork = unitOfWork;
         _notifier = notifier;
     }
 
-    public async Task<Unit> Handle(UpdateMemberDriverCommand request, CancellationToken cancellationToken)
+    public async Task<Unit> Handle(LockDepartureCommand request, CancellationToken cancellationToken)
     {
         var session = await _sessionRepository.GetByIdWithDetailsAsync(request.SessionId, cancellationToken);
-
         if (session == null)
             throw new DomainException($"Session {request.SessionId} not found.");
 
-        session.SetMemberDriver(request.MemberId, request.DriverId);
+        session.LockDeparture();
 
         await _sessionRepository.UpdateAsync(session, cancellationToken);
         await _unitOfWork.SaveChangesAsync(cancellationToken);
-        await _notifier.NotifyPickupRequestsUpdatedAsync(session.Id, cancellationToken);
+        await _notifier.NotifyDepartureLockedAsync(session.Id, cancellationToken);
 
         return Unit.Value;
     }

@@ -27,6 +27,10 @@ public class CreateSessionCommandValidator : AbstractValidator<CreateSessionComm
             .IsInEnum()
             .WithMessage("Phương tiện di chuyển không hợp lệ");
 
+        RuleFor(x => x.MobilityRole)
+            .IsInEnum()
+            .WithMessage("Vai trò di chuyển không hợp lệ");
+
         RuleFor(x => x.DefaultQuery)
             .MaximumLength(500)
             .WithMessage("Yêu cầu tìm kiếm không được vượt quá 500 ký tự")

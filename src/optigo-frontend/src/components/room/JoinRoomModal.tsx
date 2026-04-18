@@ -3,7 +3,12 @@
 import { memo, useState, useCallback } from "react";
 import { motion, AnimatePresence } from "framer-motion";
 import * as yup from "yup";
-import { TransportMode, transportModeLabels, transportModeIcons } from "@/types";
+import {
+  MemberMobilityRole,
+  TransportMode,
+  transportModeLabels,
+  transportModeIcons,
+} from "@/types";
 
 interface JoinRoomModalProps {
   isOpen: boolean;
@@ -14,6 +19,7 @@ interface JoinRoomModalProps {
     latitude: number;
     longitude: number;
     transportMode: TransportMode;
+    mobilityRole: MemberMobilityRole;
   }) => Promise<void>;
   initialLocation?: { latitude: number; longitude: number } | null;
   locationError?: string | null;
@@ -43,6 +49,7 @@ function JoinRoomModalComponent({
   locationLoading,
 }: JoinRoomModalProps) {
   const [memberName, setMemberName] = useState("");
+  const [mobilityRole, setMobilityRole] = useState<MemberMobilityRole>(MemberMobilityRole.NeedsPickup);
   const [transportMode, setTransportMode] = useState<TransportMode>(TransportMode.Motorbike);
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -63,7 +70,7 @@ function JoinRoomModalComponent({
         memberName,
         latitude: initialLocation.latitude,
         longitude: initialLocation.longitude,
-        transportMode,
+        transportMode: mobilityRole === MemberMobilityRole.NeedsPickup ? TransportMode.Walking : transportMode,
       });
 
       await onJoin({
@@ -71,6 +78,7 @@ function JoinRoomModalComponent({
         latitude: data.latitude!,
         longitude: data.longitude!,
         transportMode: data.transportMode as TransportMode,
+        mobilityRole,
       });
     } catch (err) {
       if (err instanceof yup.ValidationError) {
@@ -81,7 +89,7 @@ function JoinRoomModalComponent({
     } finally {
       setIsSubmitting(false);
     }
-  }, [memberName, transportMode, initialLocation, onJoin]);
+  }, [memberName, transportMode, initialLocation, mobilityRole, onJoin]);
 
   const transportModes = [
     TransportMode.Walking,
@@ -177,28 +185,56 @@ function JoinRoomModalComponent({
               {/* Transport Mode */}
               <div>
                 <label className="block text-sm font-medium text-[#1a1a2e] mb-2">
-                  Phương tiện di chuyển
+                  Cách tham gia chuyến đi
                 </label>
-                <div className="grid grid-cols-5 gap-2">
-                  {transportModes.map((mode) => (
-                    <motion.button
-                      key={mode}
+                <div className="grid grid-cols-2 gap-3">
+                  {[
+                    { role: MemberMobilityRole.NeedsPickup, title: "Cần được đón", description: "Gửi yêu cầu đón để tài xế nhận" },
+                    { role: MemberMobilityRole.SelfTravel, title: "Tự di chuyển", description: "Bạn tự lái hoặc tự đi tới điểm hẹn" },
+                  ].map((option) => (
+                    <button
+                      key={option.role}
                       type="button"
-                      onClick={() => setTransportMode(mode)}
-                      whileHover={{ scale: 1.05 }}
-                      whileTap={{ scale: 0.95 }}
-                      className={`flex flex-col items-center gap-1 p-3 rounded-xl transition-colors ${
-                        transportMode === mode
-                          ? "bg-[#ff1e00] text-white"
-                          : "bg-[#e8f9fd] text-[#1a1a2e] hover:bg-[#ff1e00]/10"
+                      onClick={() => setMobilityRole(option.role)}
+                      className={`rounded-xl border p-3 text-left transition-colors ${
+                        mobilityRole === option.role
+                          ? "border-[#ff1e00] bg-[#ff1e00]/5"
+                          : "border-[#e8f9fd] bg-[#e8f9fd]/30 hover:border-[#ff1e00]/30"
                       }`}
                     >
-                      <span className="text-xl">{transportModeIcons[mode]}</span>
-                      <span className="text-[10px] font-medium">{transportModeLabels[mode]}</span>
-                    </motion.button>
+                      <p className="text-sm font-semibold text-[#1a1a2e]">{option.title}</p>
+                      <p className="mt-1 text-xs text-[#6b7280]">{option.description}</p>
+                    </button>
                   ))}
                 </div>
               </div>
+
+              {mobilityRole === MemberMobilityRole.SelfTravel && (
+                <div>
+                  <label className="block text-sm font-medium text-[#1a1a2e] mb-2">
+                    Phương tiện của bạn
+                  </label>
+                  <div className="grid grid-cols-5 gap-2">
+                    {transportModes.map((mode) => (
+                      <motion.button
+                        key={mode}
+                        type="button"
+                        onClick={() => setTransportMode(mode)}
+                        whileHover={{ scale: 1.05 }}
+                        whileTap={{ scale: 0.95 }}
+                        className={`flex flex-col items-center gap-1 p-3 rounded-xl transition-colors ${
+                          transportMode === mode
+                            ? "bg-[#ff1e00] text-white"
+                            : "bg-[#e8f9fd] text-[#1a1a2e] hover:bg-[#ff1e00]/10"
+                        }`}
+                      >
+                        <span className="text-xl">{transportModeIcons[mode]}</span>
+                        <span className="text-[10px] font-medium">{transportModeLabels[mode]}</span>
+                      </motion.button>
+                    ))}
+                  </div>
+                </div>
+              )}
 
               {/* Error message */}
               <AnimatePresence>

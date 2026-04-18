@@ -9,6 +9,7 @@ public record CreateSessionCommand(
     double Latitude,
     double Longitude,
     TransportMode TransportMode,
+    MemberMobilityRole MobilityRole = MemberMobilityRole.SelfTravel,
     string DefaultQuery = "") : MediatR.IRequest<CreateSessionResult>;
 
 public class CreateSessionResult
@@ -37,8 +38,18 @@ public class CreateSessionHandler : MediatR.IRequestHandler<CreateSessionCommand
         }
 
         var hostLocation = new Coordinate(request.Latitude, request.Longitude);
-        var hostMember = new Member(session.Id, request.HostName, hostLocation, request.TransportMode);
+        var hostMember = new Member(
+            session.Id,
+            request.HostName,
+            hostLocation,
+            request.TransportMode,
+            request.MobilityRole);
         session.AddMember(hostMember);
+
+        if (hostMember.NeedsPickup())
+        {
+            session.CreateOrGetPickupRequest(hostMember.Id);
+        }
 
         await _sessionRepository.AddAsync(session, cancellationToken);
         await _unitOfWork.SaveChangesAsync(cancellationToken);

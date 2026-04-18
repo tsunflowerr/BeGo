@@ -25,6 +25,7 @@ public class SignalRSessionNotifier : ISessionNotifier
         double latitude,
         double longitude,
         Domain.Enums.TransportMode transportMode,
+        Domain.Enums.MemberMobilityRole mobilityRole,
         DateTime joinedAt,
         bool isHost,
         int totalMembers,
@@ -42,6 +43,7 @@ public class SignalRSessionNotifier : ISessionNotifier
             latitude,
             longitude,
             transportMode,
+            mobilityRole,
             joinedAt,
             isHost,
             totalMembers
@@ -115,6 +117,30 @@ public class SignalRSessionNotifier : ISessionNotifier
             sessionId,
             winningVenueId,
             message = "Nhóm đã chọn được điểm hẹn!",
+            timestamp = DateTime.UtcNow
+        }, ct);
+    }
+
+    public async Task NotifyPickupRequestsUpdatedAsync(Guid sessionId, CancellationToken ct = default)
+    {
+        var group = SessionHub.GetGroupName(sessionId.ToString());
+        _logger.LogDebug("→ SignalR [{Group}] PickupRequestsUpdated", group);
+
+        await _hubContext.Clients.Group(group).SendAsync("PickupRequestsUpdated", new
+        {
+            sessionId,
+            timestamp = DateTime.UtcNow
+        }, ct);
+    }
+
+    public async Task NotifyDepartureLockedAsync(Guid sessionId, CancellationToken ct = default)
+    {
+        var group = SessionHub.GetGroupName(sessionId.ToString());
+        _logger.LogDebug("→ SignalR [{Group}] DepartureLocked", group);
+
+        await _hubContext.Clients.Group(group).SendAsync("DepartureLocked", new
+        {
+            sessionId,
             timestamp = DateTime.UtcNow
         }, ct);
     }

@@ -43,6 +43,17 @@ public class SessionConfiguration : IEntityTypeConfiguration<Session>
             .HasColumnName("winning_venue_id")
             .HasMaxLength(100);
 
+        builder.Property(s => s.LatestOptimizationSnapshotJson)
+            .HasColumnName("latest_optimization_snapshot_json")
+            .HasColumnType("text");
+
+        builder.Property(s => s.FinalRouteSnapshotJson)
+            .HasColumnName("final_route_snapshot_json")
+            .HasColumnType("text");
+
+        builder.Property(s => s.DepartureLockedAt)
+            .HasColumnName("departure_locked_at");
+
         builder.Property(s => s.NominatedVenueIds)
             .HasColumnName("nominated_venue_ids")
             .HasColumnType("text[]")
@@ -64,6 +75,15 @@ public class SessionConfiguration : IEntityTypeConfiguration<Session>
 
         builder.Metadata
             .FindNavigation(nameof(Session.Votes))!
+            .SetPropertyAccessMode(PropertyAccessMode.Field);
+
+        builder.HasMany(s => s.PickupRequests)
+            .WithOne(r => r.Session)
+            .HasForeignKey(r => r.SessionId)
+            .OnDelete(DeleteBehavior.Cascade);
+
+        builder.Metadata
+            .FindNavigation(nameof(Session.PickupRequests))!
             .SetPropertyAccessMode(PropertyAccessMode.Field);
     }
 }

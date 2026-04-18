@@ -18,10 +18,14 @@ import {
   useToasts,
   QueryEditor,
   AddTestMemberFab,
+  PickupRequestPanel,
+  RoutePreviewCard,
 } from "@/components";
 import { useSession, useGeolocation } from "@/hooks";
 import { api } from "@/lib/api";
 import {
+  MemberMobilityRole,
+  PickupRequestStatus,
   TransportMode,
   SessionStatus,
 } from "@/types";
@@ -59,11 +63,13 @@ export default function RoomPage() {
   const {
     session,
     members,
+    pickupRequests,
     isHost,
     currentMember,
     optimizationResult,
     topVenues,
     winningVenueId,
+    finalRoutePreview,
     votingProgress,
     hasVoted,
     loading,
@@ -71,11 +77,15 @@ export default function RoomPage() {
     status,
     isComputing,
     isVoting,
+    isRoutePreview,
     isCompleted,
     isConnected,
     refreshSession,
     startOptimization,
     submitVote,
+    acceptPickupRequest,
+    releasePickupRequest,
+    lockDeparture,
   } = useSession({ sessionId, memberId });
 
   // Toast notifications for events
@@ -111,8 +121,10 @@ export default function RoomPage() {
         info("🔍 Hệ thống đang tính toán điểm hẹn tối ưu...");
       } else if (status === SessionStatus.Voting) {
         success("✨ Đã tìm được Top 3 địa điểm! Hãy bình chọn.");
+      } else if (status === SessionStatus.RoutePreview) {
+        success("🛣️ Đã dựng xong lộ trình cuối. Kiểm tra trước khi xuất phát.");
       } else if (status === SessionStatus.Completed) {
-        success("🎉 Nhóm đã chọn được điểm hẹn!");
+        success("🎉 Lộ trình đã được khóa và sẵn sàng xuất phát.");
       }
     }
     prevStatus.current = status;
@@ -151,6 +163,7 @@ export default function RoomPage() {
     latitude: number;
     longitude: number;
     transportMode: TransportMode;
+    mobilityRole: MemberMobilityRole;
   }) => {
     const response = await api.sessions.join(sessionId, data);
     setMemberId(response.memberId);
@@ -174,15 +187,32 @@ export default function RoomPage() {
     success("Đã gửi bình chọn của bạn!");
   }, [submitVote, success]);
 
+  const handleAcceptPickup = useCallback(async (requestId: string, driverId: string) => {
+    await acceptPickupRequest(requestId, driverId);
+    success("Đã nhận yêu cầu đón.");
+  }, [acceptPickupRequest, success]);
+
+  const handleReleasePickup = useCallback(async (requestId: string) => {
+    await releasePickupRequest(requestId);
+    info("Đã nhả yêu cầu đón.");
+  }, [info, releasePickupRequest]);
+
+  const handleLockDeparture = useCallback(async () => {
+    await lockDeparture();
+    success("Lộ trình đã được khóa.");
+  }, [lockDeparture, success]);
+
   // Get winning venue
   const winningVenue = winningVenueId
     ? topVenues.find((v) => v.venueId === winningVenueId)
     : null;
+  const unresolvedPickupCount = pickupRequests.filter((request) => request.status === PickupRequestStatus.Pending).length;
+  const displayRouteVenue = finalRoutePreview || winningVenue || null;
 
   // Calculate member distances to winning venue
-  const memberDistances = winningVenue
+  const memberDistances = displayRouteVenue
     ? new Map(
-        winningVenue.memberRoutes.map((r) => [
+        displayRouteVenue.memberRoutes.map((r) => [
           r.memberId,
           { time: r.estimatedTimeSeconds, distance: r.distanceMeters },
         ])
@@ -318,7 +348,8 @@ export default function RoomPage() {
                   <MapView
                     members={members}
                     geometricMedian={optimizationResult?.geometricMedian}
-                    venues={isCompleted && winningVenue ? [winningVenue] : topVenues}
+                    venues={(isRoutePreview || isCompleted) && displayRouteVenue ? [displayRouteVenue] : topVenues}
+                    routePreview={displayRouteVenue}
                     winningVenueId={winningVenueId || undefined}
                     isLoading={isComputing}
                   />
@@ -332,23 +363,41 @@ export default function RoomPage() {
                   hostMemberId={session?.members?.[0]?.id}
                   currentMemberId={memberId || undefined}
                   winningVenueId={winningVenueId || undefined}
-                  showDistances={isCompleted}
+                  showDistances={isRoutePreview || isCompleted}
                   memberDistances={memberDistances}
                 />
 
+                <div className="mt-4">
+                  <PickupRequestPanel
+                    members={members}
+                    pickupRequests={pickupRequests}
+                    currentMemberId={memberId || undefined}
+                    onAccept={handleAcceptPickup}
+                    onRelease={handleReleasePickup}
+                  />
+                </div>
+
                 {/* Start button (for host only, in waiting state) */}
                 {status === SessionStatus.WaitingForMembers && isHost && members.length > 0 && (
-                  <motion.button
-                    onClick={handleStartOptimization}
-                    whileHover={{ scale: 1.02 }}
-                    whileTap={{ scale: 0.98 }}
-                    className="w-full mt-4 py-3.5 rounded-xl font-semibold text-white bg-gradient-to-r from-[#ff1e00] to-[#ff4d33] hover:from-[#cc1800] hover:to-[#ff1e00] transition-all shadow-lg shadow-[#ff1e00]/30 flex items-center justify-center gap-2"
-                  >
-                    <svg className="w-5 h-5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-                      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M21 21l-6-6m2-5a7 7 0 11-14 0 7 7 0 0114 0z" />
-                    </svg>
-                    <span>Bắt đầu tìm kiếm</span>
-                  </motion.button>
+                  <div className="mt-4 space-y-2">
+                    {unresolvedPickupCount > 0 && (
+                      <div className="rounded-xl bg-[#fff5d6] p-3 text-sm text-[#9a6700]">
+                        Cần xử lý {unresolvedPickupCount} yêu cầu đón trước khi tối ưu địa điểm.
+                      </div>
+                    )}
+                    <motion.button
+                      onClick={handleStartOptimization}
+                      disabled={unresolvedPickupCount > 0}
+                      whileHover={unresolvedPickupCount > 0 ? {} : { scale: 1.02 }}
+                      whileTap={unresolvedPickupCount > 0 ? {} : { scale: 0.98 }}
+                      className="flex w-full items-center justify-center gap-2 rounded-xl bg-gradient-to-r from-[#ff1e00] to-[#ff4d33] py-3.5 font-semibold text-white transition-all shadow-lg shadow-[#ff1e00]/30 disabled:cursor-not-allowed disabled:opacity-60"
+                    >
+                      <svg className="w-5 h-5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M21 21l-6-6m2-5a7 7 0 11-14 0 7 7 0 0114 0z" />
+                      </svg>
+                      <span>Bắt đầu tìm kiếm</span>
+                    </motion.button>
+                  </div>
                 )}
 
                 {/* Waiting message (for non-host) */}
@@ -435,6 +484,30 @@ export default function RoomPage() {
 
                   {/* Feature suggestions */}
                   <FeatureSuggestion />
+                </motion.div>
+              )}
+            </AnimatePresence>
+
+            <AnimatePresence>
+              {(isRoutePreview || isCompleted) && displayRouteVenue && (
+                <motion.div
+                  initial={{ opacity: 0, y: 20 }}
+                  animate={{ opacity: 1, y: 0 }}
+                  exit={{ opacity: 0, y: -20 }}
+                  className="mt-6 space-y-4"
+                >
+                  <RoutePreviewCard venue={displayRouteVenue} />
+
+                  {isHost && isRoutePreview && (
+                    <motion.button
+                      onClick={handleLockDeparture}
+                      whileHover={{ scale: 1.01 }}
+                      whileTap={{ scale: 0.98 }}
+                      className="w-full rounded-xl bg-gradient-to-r from-[#59ce8f] to-[#7dd9a7] py-3.5 font-semibold text-white shadow-lg shadow-[#59ce8f]/30"
+                    >
+                      Khóa lộ trình và chuẩn bị xuất phát
+                    </motion.button>
+                  )}
                 </motion.div>
               )}
             </AnimatePresence>

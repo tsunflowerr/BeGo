@@ -15,8 +15,12 @@ public class SessionDto
     public DateTime ExpiresAt { get; init; }
     public List<MemberDto> Members { get; init; } = new();
     public List<VoteDto> Votes { get; init; } = new();
+    public List<PickupRequestDto> PickupRequests { get; init; } = new();
     public List<string> NominatedVenueIds { get; init; } = new();
     public string? WinningVenueId { get; init; }
+    public FindMeetPointResult? LatestOptimizationResult { get; init; }
+    public CandidateResultDto? FinalRoutePreview { get; init; }
+    public DateTime? DepartureLockedAt { get; init; }
 }
 
 public class MemberDto
@@ -26,7 +30,10 @@ public class MemberDto
     public double Latitude { get; init; }
     public double Longitude { get; init; }
     public TransportMode TransportMode { get; init; }
+    public MemberMobilityRole MobilityRole { get; init; }
     public Guid? DriverId { get; init; }
+    public bool CanOfferPickup { get; init; }
+    public int AvailableSeatCount { get; init; }
     public DateTime JoinedAt { get; init; }
     public bool IsHost { get; init; }
 }

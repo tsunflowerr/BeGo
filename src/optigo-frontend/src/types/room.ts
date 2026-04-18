@@ -12,8 +12,20 @@ export enum SessionStatus {
   WaitingForMembers = "WaitingForMembers",
   Computing = "Computing",
   Voting = "Voting",
+  RoutePreview = "RoutePreview",
   Completed = "Completed",
   Failed = "Failed",
+}
+
+export enum MemberMobilityRole {
+  SelfTravel = "SelfTravel",
+  NeedsPickup = "NeedsPickup",
+}
+
+export enum PickupRequestStatus {
+  Pending = "Pending",
+  Accepted = "Accepted",
+  Cancelled = "Cancelled",
 }
 
 // Member interface
@@ -24,6 +36,10 @@ export interface Member {
   latitude: number;
   longitude: number;
   transportMode: TransportMode;
+  mobilityRole: MemberMobilityRole;
+  driverId?: string | null;
+  canOfferPickup?: boolean;
+  availableSeatCount?: number;
   joinedAt: string;
   isHost?: boolean;
   avatar?: string;
@@ -38,7 +54,24 @@ export interface Session {
   createdAt: string;
   expiresAt: string;
   members: Member[];
+  votes: Vote[];
+  pickupRequests: PickupRequest[];
   nominatedVenueIds: string[];
+  winningVenueId?: string | null;
+  latestOptimizationResult?: OptimizationResult | null;
+  finalRoutePreview?: Venue | null;
+  departureLockedAt?: string | null;
+}
+
+export interface PickupRequest {
+  requestId: string;
+  passengerId: string;
+  passengerName: string;
+  status: PickupRequestStatus;
+  acceptedDriverId?: string | null;
+  acceptedDriverName?: string | null;
+  createdAt: string;
+  updatedAt: string;
 }
 
 // Member route info for a venue
@@ -47,6 +80,31 @@ export interface MemberRoute {
   memberName: string;
   estimatedTimeSeconds: number;
   distanceMeters: number;
+  driverId?: string | null;
+  walkingDistanceMeters?: number;
+}
+
+export interface RouteStop {
+  sequence: number;
+  stopType: string;
+  label: string;
+  latitude: number;
+  longitude: number;
+  etaSeconds: number;
+  distanceFromPreviousMeters: number;
+  walkingDistanceMeters: number;
+  passengerIds: string[];
+}
+
+export interface DriverRoute {
+  driverId: string;
+  driverName: string;
+  totalTimeSeconds: number;
+  totalDistanceMeters: number;
+  directTimeSeconds: number;
+  directDistanceMeters: number;
+  passengerIds: string[];
+  stops: RouteStop[];
 }
 
 // Review from Google Places
@@ -70,7 +128,10 @@ export interface Venue {
   priceLevel?: number;
   totalTimeSeconds: number;
   finalScore: number;
+  maxDriverDetourSeconds: number;
+  totalWalkingDistanceMeters: number;
   memberRoutes: MemberRoute[];
+  driverRoutes: DriverRoute[];
   photoUrls: string[];
   aiReviewSummary?: string;
   topReviews: VenueReview[];
@@ -109,6 +170,7 @@ export interface MemberJoinedEvent {
   latitude: number;
   longitude: number;
   transportMode: TransportMode;
+  mobilityRole: MemberMobilityRole;
   joinedAt: string;
   isHost: boolean;
   totalMembers: number;
@@ -142,6 +204,16 @@ export interface VotingCompletedEvent {
   timestamp: string;
 }
 
+export interface PickupRequestsUpdatedEvent {
+  sessionId: string;
+  timestamp: string;
+}
+
+export interface DepartureLockedEvent {
+  sessionId: string;
+  timestamp: string;
+}
+
 export interface SignalRError {
   code: string;
   message: string;
@@ -162,6 +234,11 @@ export const transportModeIcons: Record<TransportMode, string> = {
   [TransportMode.Motorbike]: "🏍️",
   [TransportMode.Car]: "🚗",
   [TransportMode.Bus]: "🚌",
+};
+
+export const mobilityRoleLabels: Record<MemberMobilityRole, string> = {
+  [MemberMobilityRole.SelfTravel]: "Tự di chuyển",
+  [MemberMobilityRole.NeedsPickup]: "Cần đón",
 };
 
 // Helper to format time

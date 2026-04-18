@@ -41,7 +41,8 @@ public class SessionsController : ControllerBase
             request.MemberName,
             request.Latitude,
             request.Longitude,
-            request.TransportMode);
+            request.TransportMode,
+            request.MobilityRole);
 
         var memberId = await _mediator.Send(command);
         return Ok(new { MemberId = memberId });
@@ -68,6 +69,27 @@ public class SessionsController : ControllerBase
                 : "Pickup assignment removed successfully"
         });
     }
+
+    [HttpPost("{id:guid}/pickup-requests/{requestId:guid}/accept")]
+    public async Task<IActionResult> AcceptPickupRequest(Guid id, Guid requestId, [FromBody] AcceptPickupRequest request)
+    {
+        await _mediator.Send(new AcceptPickupRequestCommand(id, requestId, request.DriverId));
+        return Ok(new { Message = "Pickup request accepted successfully" });
+    }
+
+    [HttpPost("{id:guid}/pickup-requests/{requestId:guid}/release")]
+    public async Task<IActionResult> ReleasePickupRequest(Guid id, Guid requestId)
+    {
+        await _mediator.Send(new ReleasePickupRequestCommand(id, requestId));
+        return Ok(new { Message = "Pickup request released successfully" });
+    }
+
+    [HttpPost("{id:guid}/departure/lock")]
+    public async Task<IActionResult> LockDeparture(Guid id)
+    {
+        await _mediator.Send(new LockDepartureCommand(id));
+        return Ok(new { Message = "Departure locked successfully" });
+    }
 }
 
 public class JoinSessionRequest
@@ -76,6 +98,7 @@ public class JoinSessionRequest
     public double Latitude { get; set; }
     public double Longitude { get; set; }
     public Domain.Enums.TransportMode TransportMode { get; set; }
+    public Domain.Enums.MemberMobilityRole MobilityRole { get; set; } = Domain.Enums.MemberMobilityRole.SelfTravel;
 }
 
 public class UpdateQueryRequest
@@ -86,4 +109,9 @@ public class UpdateQueryRequest
 public class UpdateMemberDriverRequest
 {
     public Guid? DriverId { get; set; }
+}
+
+public class AcceptPickupRequest
+{
+    public Guid DriverId { get; set; }
 }

@@ -7,3 +7,5 @@ export { FeatureSuggestion } from "./FeatureSuggestion";
 export { VotingProgress } from "./VotingProgress";
 export { QueryEditor } from "./QueryEditor";
 export { AddTestMemberFab } from "./AddTestMemberFab";
+export { PickupRequestPanel } from "./PickupRequestPanel";
+export { RoutePreviewCard } from "./RoutePreviewCard";

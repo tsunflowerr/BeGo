@@ -3,7 +3,7 @@
 import { memo, useCallback, useEffect, useState } from "react";
 import { motion, AnimatePresence } from "framer-motion";
 import { api } from "@/lib/api";
-import { TransportMode, transportModeIcons, transportModeLabels } from "@/types";
+import { MemberMobilityRole, TransportMode, transportModeIcons, transportModeLabels } from "@/types";
 
 interface AddTestMemberFabProps {
   sessionId: string;
@@ -110,6 +110,7 @@ function AddTestMemberFabComponent({
         latitude: parsedLatitude,
         longitude: parsedLongitude,
         transportMode,
+        mobilityRole: transportMode === TransportMode.Walking ? MemberMobilityRole.NeedsPickup : MemberMobilityRole.SelfTravel,
       });
 
       await onMemberAdded?.();

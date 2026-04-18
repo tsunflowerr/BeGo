@@ -5,9 +5,12 @@ import { api } from "@/lib/api";
 import {
   Session,
   Member,
+  PickupRequest,
   SessionStatus,
   OptimizationResult,
   Venue,
+  PickupRequestsUpdatedEvent,
+  DepartureLockedEvent,
   MemberJoinedEvent,
   OptimizationCompletedEvent,
   VoteSubmittedEvent,
@@ -24,6 +27,7 @@ interface UseSessionReturn {
   // Session data
   session: Session | null;
   members: Member[];
+  pickupRequests: PickupRequest[];
   isHost: boolean;
   currentMember: Member | null;
   
@@ -31,6 +35,7 @@ interface UseSessionReturn {
   optimizationResult: OptimizationResult | null;
   topVenues: Venue[];
   winningVenueId: string | null;
+  finalRoutePreview: Venue | null;
   
   // Voting
   votingProgress: { total: number; voted: number };
@@ -42,6 +47,7 @@ interface UseSessionReturn {
   status: SessionStatus;
   isComputing: boolean;
   isVoting: boolean;
+  isRoutePreview: boolean;
   isCompleted: boolean;
   
   // Connection
@@ -51,13 +57,18 @@ interface UseSessionReturn {
   refreshSession: () => Promise<void>;
   startOptimization: (query?: string) => Promise<void>;
   submitVote: (venueId: string) => Promise<void>;
+  acceptPickupRequest: (requestId: string, driverId: string) => Promise<void>;
+  releasePickupRequest: (requestId: string) => Promise<void>;
+  lockDeparture: () => Promise<void>;
 }
 
 export function useSession({ sessionId, memberId }: UseSessionOptions): UseSessionReturn {
   const [session, setSession] = useState<Session | null>(null);
   const [members, setMembers] = useState<Member[]>([]);
+  const [pickupRequests, setPickupRequests] = useState<PickupRequest[]>([]);
   const [optimizationResult, setOptimizationResult] = useState<OptimizationResult | null>(null);
   const [winningVenueId, setWinningVenueId] = useState<string | null>(null);
+  const [finalRoutePreview, setFinalRoutePreview] = useState<Venue | null>(null);
   const [votingProgress, setVotingProgress] = useState({ total: 0, voted: 0 });
   const [hasVoted, setHasVoted] = useState(false);
   const [loading, setLoading] = useState(true);
@@ -65,6 +76,26 @@ export function useSession({ sessionId, memberId }: UseSessionOptions): UseSessi
   const [isComputing, setIsComputing] = useState(false);
   
   const loadedRef = useRef(false);
+
+  // Fetch session data
+  const refreshSession = useCallback(async () => {
+    try {
+      setError(null);
+      const data = await api.sessions.get(sessionId);
+      setSession(data);
+      setMembers(data.members || []);
+      setPickupRequests(data.pickupRequests || []);
+      setOptimizationResult(data.latestOptimizationResult || null);
+      setWinningVenueId(data.winningVenueId || null);
+      setFinalRoutePreview(data.finalRoutePreview || null);
+      setVotingProgress({ total: data.members?.length || 0, voted: data.votes?.length || 0 });
+      setHasVoted(!!memberId && (data.votes || []).some((vote) => vote.memberId === memberId));
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Không thể tải thông tin phòng");
+    } finally {
+      setLoading(false);
+    }
+  }, [memberId, sessionId]);
 
   // SignalR event handlers
   const handleMemberJoined = useCallback((event: MemberJoinedEvent) => {
@@ -76,6 +107,7 @@ export function useSession({ sessionId, memberId }: UseSessionOptions): UseSessi
         latitude: event.latitude,
         longitude: event.longitude,
         transportMode: event.transportMode,
+        mobilityRole: event.mobilityRole,
         joinedAt: event.joinedAt,
         isHost: event.isHost,
       };
@@ -97,6 +129,7 @@ export function useSession({ sessionId, memberId }: UseSessionOptions): UseSessi
     setIsComputing(false);
     setOptimizationResult(event.result);
     setWinningVenueId(null);
+    setFinalRoutePreview(null);
     setHasVoted(false);
     setSession((prev) => prev ? { ...prev, status: SessionStatus.Voting } : null);
     setVotingProgress({ total: members.length, voted: 0 });
@@ -111,8 +144,17 @@ export function useSession({ sessionId, memberId }: UseSessionOptions): UseSessi
 
   const handleVotingCompleted = useCallback((event: VotingCompletedEvent) => {
     setWinningVenueId(event.winningVenueId);
-    setSession((prev) => prev ? { ...prev, status: SessionStatus.Completed } : null);
-  }, []);
+    setSession((prev) => prev ? { ...prev, status: SessionStatus.RoutePreview } : null);
+    void refreshSession();
+  }, [refreshSession]);
+
+  const handlePickupRequestsUpdated = useCallback((_event: PickupRequestsUpdatedEvent) => {
+    void refreshSession();
+  }, [refreshSession]);
+
+  const handleDepartureLocked = useCallback((_event: DepartureLockedEvent) => {
+    void refreshSession();
+  }, [refreshSession]);
 
   const handleError = useCallback((error: { code: string; message: string }) => {
     setError(error.message);
@@ -126,27 +168,10 @@ export function useSession({ sessionId, memberId }: UseSessionOptions): UseSessi
     onOptimizationCompleted: handleOptimizationCompleted,
     onVoteSubmitted: handleVoteSubmitted,
     onVotingCompleted: handleVotingCompleted,
+    onPickupRequestsUpdated: handlePickupRequestsUpdated,
+    onDepartureLocked: handleDepartureLocked,
     onError: handleError,
   });
-
-  // Fetch session data
-  const refreshSession = useCallback(async () => {
-    try {
-      setError(null);
-      const data = await api.sessions.get(sessionId);
-      setSession(data);
-      setMembers(data.members || []);
-      
-      if (data.status === SessionStatus.Voting || data.status === SessionStatus.Completed) {
-        // Session already has results, we might need to fetch them
-        // For now, we rely on SignalR to deliver results
-      }
-    } catch (err) {
-      setError(err instanceof Error ? err.message : "Không thể tải thông tin phòng");
-    } finally {
-      setLoading(false);
-    }
-  }, [sessionId]);
 
   // Initial load
   useEffect(() => {
@@ -164,6 +189,7 @@ export function useSession({ sessionId, memberId }: UseSessionOptions): UseSessi
       const result = await api.optimizer.findMeetingPoint(sessionId, query);
       setOptimizationResult(result);
       setWinningVenueId(null);
+      setFinalRoutePreview(null);
       setHasVoted(false);
       setSession((prev) => prev ? { ...prev, status: SessionStatus.Voting } : null);
       setVotingProgress({ total: members.length, voted: 0 });
@@ -188,29 +214,63 @@ export function useSession({ sessionId, memberId }: UseSessionOptions): UseSessi
       
       if (response.isVotingCompleted && response.winningVenueId) {
         setWinningVenueId(response.winningVenueId);
-        setSession((prev) => prev ? { ...prev, status: SessionStatus.Completed } : null);
+        setSession((prev) => prev ? { ...prev, status: SessionStatus.RoutePreview } : null);
+        await refreshSession();
       }
     } catch (err) {
       setError(err instanceof Error ? err.message : "Không thể gửi bình chọn");
     }
-  }, [sessionId, memberId]);
+  }, [sessionId, memberId, refreshSession]);
+
+  const acceptPickupRequest = useCallback(async (requestId: string, driverId: string) => {
+    try {
+      setError(null);
+      await api.sessions.acceptPickupRequest(sessionId, requestId, driverId);
+      await refreshSession();
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Không thể nhận yêu cầu đón");
+    }
+  }, [refreshSession, sessionId]);
+
+  const releasePickupRequest = useCallback(async (requestId: string) => {
+    try {
+      setError(null);
+      await api.sessions.releasePickupRequest(sessionId, requestId);
+      await refreshSession();
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Không thể nhả yêu cầu đón");
+    }
+  }, [refreshSession, sessionId]);
+
+  const lockDeparture = useCallback(async () => {
+    try {
+      setError(null);
+      await api.sessions.lockDeparture(sessionId);
+      await refreshSession();
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Không thể khóa chuyến đi");
+    }
+  }, [refreshSession, sessionId]);
 
   // Derived state
   const currentMember = members.find((m) => m.id === memberId) || null;
   const isHost = session?.members?.[0]?.id === memberId || members[0]?.id === memberId;
   const status = session?.status || SessionStatus.WaitingForMembers;
-  const topVenues = optimizationResult?.topVenues || [];
+  const topVenues = optimizationResult?.topVenues || session?.latestOptimizationResult?.topVenues || [];
   const isVoting = status === SessionStatus.Voting;
+  const isRoutePreview = status === SessionStatus.RoutePreview;
   const isCompleted = status === SessionStatus.Completed;
 
   return {
     session,
     members,
+    pickupRequests,
     isHost,
     currentMember,
     optimizationResult,
     topVenues,
     winningVenueId,
+    finalRoutePreview,
     votingProgress,
     hasVoted,
     loading,
@@ -218,10 +278,14 @@ export function useSession({ sessionId, memberId }: UseSessionOptions): UseSessi
     status,
     isComputing,
     isVoting,
+    isRoutePreview,
     isCompleted,
     isConnected,
     refreshSession,
     startOptimization,
     submitVote,
+    acceptPickupRequest,
+    releasePickupRequest,
+    lockDeparture,
   };
 }
