@@ -38,35 +38,6 @@ public sealed record TrafficSnapshot(
     double CongestionMultiplier = 1.0,
     bool IsLive = false);
 
-public sealed record RouteDiagnosticsSnapshot(
-    long CacheHits,
-    long CacheMisses,
-    long ExactRouteApiCalls,
-    long MatrixApiCalls)
-{
-    public CacheDiagnosticsDto ToDto() => new()
-    {
-        CacheHits = CacheHits,
-        CacheMisses = CacheMisses,
-        ExactRouteApiCalls = ExactRouteApiCalls,
-        MatrixApiCalls = MatrixApiCalls
-    };
-
-    public double TotalApiCostEstimate => ExactRouteApiCalls + MatrixApiCalls * 0.35;
-
-    public double CacheHitRatio =>
-        CacheHits + CacheMisses == 0
-            ? 1
-            : (double)CacheHits / (CacheHits + CacheMisses);
-
-    public static RouteDiagnosticsSnapshot Diff(RouteDiagnosticsSnapshot before, RouteDiagnosticsSnapshot after) =>
-        new(
-            Math.Max(0, after.CacheHits - before.CacheHits),
-            Math.Max(0, after.CacheMisses - before.CacheMisses),
-            Math.Max(0, after.ExactRouteApiCalls - before.ExactRouteApiCalls),
-            Math.Max(0, after.MatrixApiCalls - before.MatrixApiCalls));
-}
-
 public sealed record RouteCostContext(
     bool PreferTrafficAware,
     string TrafficBucketKey);

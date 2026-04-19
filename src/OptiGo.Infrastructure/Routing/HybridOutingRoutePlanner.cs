@@ -6,8 +6,6 @@ namespace OptiGo.Infrastructure.Routing;
 
 public class HybridOutingRoutePlanner : IOutingRoutePlanner
 {
-    public const string PlannerVersionName = "hybrid-v2";
-
     private readonly IDriverRouteOptimizer _driverRouteOptimizer;
     private readonly IRouteCostProvider _routeCostProvider;
     private readonly ITrafficSnapshotProvider _trafficSnapshotProvider;
@@ -27,7 +25,6 @@ public class HybridOutingRoutePlanner : IOutingRoutePlanner
         Venue venue,
         CancellationToken ct = default)
     {
-        var before = _routeCostProvider.CaptureSnapshot();
         var trafficSnapshot = _trafficSnapshotProvider.GetCurrentSnapshot();
         var membersById = session.Members.ToDictionary(member => member.Id);
         var acceptedRequests = session.PickupRequests
@@ -109,9 +106,6 @@ public class HybridOutingRoutePlanner : IOutingRoutePlanner
         aggregateBreakdown.VenueQualityBonusSeconds = qualityBonusSeconds;
         aggregateBreakdown.GeneralizedCostSeconds = Math.Max(0, aggregateBreakdown.GeneralizedCostSeconds - qualityBonusSeconds);
 
-        var after = _routeCostProvider.CaptureSnapshot();
-        var diff = RouteDiagnosticsSnapshot.Diff(before, after);
-
         return new CandidateResultDto
         {
             VenueId = venue.Id,
@@ -128,10 +122,6 @@ public class HybridOutingRoutePlanner : IOutingRoutePlanner
                 .DefaultIfEmpty(0)
                 .Max(),
             TotalWalkingDistanceMeters = memberRoutes.Sum(route => route.WalkingDistanceMeters),
-            PlannerVersion = PlannerVersionName,
-            ApiCostEstimate = diff.TotalApiCostEstimate,
-            CacheHitRatio = diff.CacheHitRatio,
-            CacheDiagnostics = diff.ToDto(),
             ScoreBreakdown = aggregateBreakdown,
             MemberRoutes = memberRoutes.OrderBy(route => route.MemberName).ToList(),
             DriverRoutes = driverRoutes.OrderBy(route => route.DriverName).ToList()

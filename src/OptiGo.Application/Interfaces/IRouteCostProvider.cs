@@ -19,6 +19,4 @@ public interface IRouteCostProvider
         TransportMode mode,
         RouteCostContext? context = null,
         CancellationToken ct = default);
-
-    RouteDiagnosticsSnapshot CaptureSnapshot();
 }

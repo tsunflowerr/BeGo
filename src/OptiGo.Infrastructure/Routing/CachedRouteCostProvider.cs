@@ -16,11 +16,6 @@ public class CachedRouteCostProvider : IRouteCostProvider
     private readonly ConcurrentDictionary<string, TimedRouteResult> _routeCache = new();
     private readonly ConcurrentDictionary<string, TimedMatrixResult> _matrixCache = new();
 
-    private long _cacheHits;
-    private long _cacheMisses;
-    private long _exactRouteApiCalls;
-    private long _matrixApiCalls;
-
     public CachedRouteCostProvider(
         ITravelTimeService travelTimeService,
         ITrafficSnapshotProvider trafficSnapshotProvider)
@@ -46,13 +41,8 @@ public class CachedRouteCostProvider : IRouteCostProvider
             $"{origin.Latitude:F5}|{origin.Longitude:F5}|{destination.Latitude:F5}|{destination.Longitude:F5}|{(int)mode}|{effectiveContext.PreferTrafficAware}|{effectiveContext.TrafficBucketKey}");
 
         if (_routeCache.TryGetValue(key, out var cached) && !cached.IsExpired)
-        {
-            Interlocked.Increment(ref _cacheHits);
             return cached.Result;
-        }
 
-        Interlocked.Increment(ref _cacheMisses);
-        Interlocked.Increment(ref _exactRouteApiCalls);
         var result = await _travelTimeService.GetRouteAsync(origin, destination, mode, ct);
         var ttl = effectiveContext.PreferTrafficAware ? TrafficAwareTtl : BaseTtl;
         _routeCache[key] = new TimedRouteResult(result, DateTimeOffset.UtcNow.Add(ttl));
@@ -79,25 +69,13 @@ public class CachedRouteCostProvider : IRouteCostProvider
             string.Join(";", destinations.Select(coord => $"{coord.Latitude:F4},{coord.Longitude:F4}")));
 
         if (_matrixCache.TryGetValue(key, out var cached) && !cached.IsExpired)
-        {
-            Interlocked.Increment(ref _cacheHits);
             return cached.Result;
-        }
 
-        Interlocked.Increment(ref _cacheMisses);
-        Interlocked.Increment(ref _matrixApiCalls);
         var result = await _travelTimeService.GetTravelMatrixAsync(origins, destinations, mode, ct);
         var ttl = context?.PreferTrafficAware == true ? TrafficAwareTtl : BaseTtl;
         _matrixCache[key] = new TimedMatrixResult(result, DateTimeOffset.UtcNow.Add(ttl));
         return result;
     }
-
-    public RouteDiagnosticsSnapshot CaptureSnapshot() =>
-        new(
-            Interlocked.Read(ref _cacheHits),
-            Interlocked.Read(ref _cacheMisses),
-            Interlocked.Read(ref _exactRouteApiCalls),
-            Interlocked.Read(ref _matrixApiCalls));
 
     private sealed record TimedRouteResult(RouteResult Result, DateTimeOffset ExpiresAt)
     {

@@ -49,8 +49,6 @@ internal static class TestRoutingSupport
 
 internal sealed class FakeRouteCostProvider : IRouteCostProvider
 {
-    private long _cacheMisses;
-
     public Task<RouteResult> GetExactRouteAsync(
         Coordinate origin,
         Coordinate destination,
@@ -58,7 +56,6 @@ internal sealed class FakeRouteCostProvider : IRouteCostProvider
         RouteCostContext? context = null,
         CancellationToken ct = default)
     {
-        Interlocked.Increment(ref _cacheMisses);
         var distance = origin.DistanceTo(destination);
         return Task.FromResult(new RouteResult
         {
@@ -74,7 +71,6 @@ internal sealed class FakeRouteCostProvider : IRouteCostProvider
         RouteCostContext? context = null,
         CancellationToken ct = default)
     {
-        Interlocked.Increment(ref _cacheMisses);
         var durations = new double[origins.Count, destinations.Count];
         var distances = new double[origins.Count, destinations.Count];
         for (var i = 0; i < origins.Count; i++)
@@ -92,9 +88,6 @@ internal sealed class FakeRouteCostProvider : IRouteCostProvider
             Distances = distances
         });
     }
-
-    public RouteDiagnosticsSnapshot CaptureSnapshot() =>
-        new(0, Interlocked.Read(ref _cacheMisses), Interlocked.Read(ref _cacheMisses), 0);
 
     private static double GetSpeedMetersPerSecond(TransportMode mode) => mode switch
     {

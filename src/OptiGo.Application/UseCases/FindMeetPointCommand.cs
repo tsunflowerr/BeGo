@@ -27,12 +27,7 @@ public class CandidateResultDto
     public double FinalScore { get; set; }
     public double MaxDriverDetourSeconds { get; set; }
     public double TotalWalkingDistanceMeters { get; set; }
-    public string PlannerVersion { get; set; } = string.Empty;
-    public double ApiCostEstimate { get; set; }
-    public double CacheHitRatio { get; set; }
     public RouteScoreBreakdownDto ScoreBreakdown { get; set; } = new();
-    public PlannerBenchmarkComparisonDto? BenchmarkComparison { get; set; }
-    public CacheDiagnosticsDto? CacheDiagnostics { get; set; }
     public List<string> PhotoUrls { get; set; } = new();
     public string? AiReviewSummary { get; set; }
     public List<ReviewDto> TopReviews { get; set; } = new();
@@ -73,23 +68,4 @@ public class RouteScoreBreakdownDto
     public double RiskPenaltySeconds { get; set; }
     public double StabilityPenaltySeconds { get; set; }
     public double VenueQualityBonusSeconds { get; set; }
-}
-    
-public class PlannerBenchmarkComparisonDto
-{
-    public string BaselinePlannerVersion { get; set; } = string.Empty;
-    public string ImprovedPlannerVersion { get; set; } = string.Empty;
-    public double BaselineGeneralizedCostSeconds { get; set; }
-    public double ImprovedGeneralizedCostSeconds { get; set; }
-    public double ImprovementPercent { get; set; }
-    public int BaselineStopCount { get; set; }
-    public int ImprovedStopCount { get; set; }
-}
-
-public class CacheDiagnosticsDto
-{
-    public long CacheHits { get; set; }
-    public long CacheMisses { get; set; }
-    public long ExactRouteApiCalls { get; set; }
-    public long MatrixApiCalls { get; set; }
 }

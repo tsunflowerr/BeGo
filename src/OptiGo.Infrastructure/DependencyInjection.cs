@@ -54,8 +54,6 @@ public static class DependencyInjection
         services.AddScoped<IStopCandidateGenerator, StopCandidateGenerator>();
         services.AddScoped<IDriverRouteOptimizer, SharedDestinationRouteOptimizer>();
         services.AddScoped<IVenueEvaluator, DefaultVenueEvaluator>();
-        services.AddScoped<IBaselineOutingRoutePlanner, BaselineOutingRoutePlanner>();
-        services.AddScoped<IRouteBenchmarkRecorder, LoggingRouteBenchmarkRecorder>();
         services.AddScoped<IOutingRoutePlanner, HybridOutingRoutePlanner>();
 
         services.Configure<GroqOptions>(configuration.GetSection("Groq"));

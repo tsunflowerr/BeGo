@@ -130,23 +130,6 @@ export interface RouteScoreBreakdown {
   venueQualityBonusSeconds: number;
 }
 
-export interface PlannerBenchmarkComparison {
-  baselinePlannerVersion: string;
-  improvedPlannerVersion: string;
-  baselineGeneralizedCostSeconds: number;
-  improvedGeneralizedCostSeconds: number;
-  improvementPercent: number;
-  baselineStopCount: number;
-  improvedStopCount: number;
-}
-
-export interface CacheDiagnostics {
-  cacheHits: number;
-  cacheMisses: number;
-  exactRouteApiCalls: number;
-  matrixApiCalls: number;
-}
-
 // Review from Google Places
 export interface VenueReview {
   authorName: string;
@@ -170,12 +153,7 @@ export interface Venue {
   finalScore: number;
   maxDriverDetourSeconds: number;
   totalWalkingDistanceMeters: number;
-  plannerVersion: string;
-  apiCostEstimate: number;
-  cacheHitRatio: number;
   scoreBreakdown: RouteScoreBreakdown;
-  benchmarkComparison?: PlannerBenchmarkComparison | null;
-  cacheDiagnostics?: CacheDiagnostics | null;
   memberRoutes: MemberRoute[];
   driverRoutes: DriverRoute[];
   photoUrls: string[];

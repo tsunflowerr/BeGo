@@ -20,8 +20,6 @@ public class DefaultVenueEvaluator : IVenueEvaluator
         var maxDetour = candidates.Max(candidate => candidate.MaxDriverDetourSeconds);
         var minWalk = candidates.Min(candidate => candidate.TotalWalkingDistanceMeters);
         var maxWalk = candidates.Max(candidate => candidate.TotalWalkingDistanceMeters);
-        var minApi = candidates.Min(candidate => candidate.ApiCostEstimate);
-        var maxApi = candidates.Max(candidate => candidate.ApiCostEstimate);
 
         foreach (var candidate in candidates)
         {
@@ -29,15 +27,13 @@ public class DefaultVenueEvaluator : IVenueEvaluator
             var normalizedFairness = Normalize(candidate.ScoreBreakdown.FairnessPenaltySeconds, minFairness, maxFairness);
             var normalizedDetour = Normalize(candidate.MaxDriverDetourSeconds, minDetour, maxDetour);
             var normalizedWalk = Normalize(candidate.TotalWalkingDistanceMeters, minWalk, maxWalk);
-            var normalizedApi = Normalize(candidate.ApiCostEstimate, minApi, maxApi);
 
             candidate.FinalScore = Math.Round(
                 100 -
-                normalizedCost * 55 -
+                normalizedCost * 58 -
                 normalizedFairness * 16 -
                 normalizedDetour * 14 -
-                normalizedWalk * 10 -
-                normalizedApi * 5,
+                normalizedWalk * 12,
                 2);
         }
 
