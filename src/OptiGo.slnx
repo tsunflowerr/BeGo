@@ -3,4 +3,5 @@
   <Project Path="OptiGo.Application/OptiGo.Application.csproj" />
   <Project Path="OptiGo.Domain/OptiGo.Domain.csproj" />
   <Project Path="OptiGo.Infrastructure/OptiGo.Infrastructure.csproj" />
+  <Project Path="OptiGo.Tests/OptiGo.Tests.csproj" />
 </Solution>

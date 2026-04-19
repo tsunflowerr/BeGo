@@ -22,6 +22,34 @@ function RoutePreviewCardComponent({ venue }: RoutePreviewCardProps) {
         </span>
       </div>
 
+      <div className="mt-3 grid grid-cols-1 gap-2 md:grid-cols-3">
+        <div className="rounded-xl bg-[#f9fcff] px-3 py-2">
+          <p className="text-[11px] uppercase tracking-wide text-[#6b7280]">Generalized Cost</p>
+          <p className="mt-1 text-sm font-semibold text-[#1a1a2e]">
+            {formatDuration(venue.scoreBreakdown.generalizedCostSeconds)}
+          </p>
+        </div>
+        <div className="rounded-xl bg-[#f9fcff] px-3 py-2">
+          <p className="text-[11px] uppercase tracking-wide text-[#6b7280]">Wait + Walk</p>
+          <p className="mt-1 text-sm font-semibold text-[#1a1a2e]">
+            {formatDuration(venue.scoreBreakdown.totalWaitSeconds)} • {formatDistance(venue.totalWalkingDistanceMeters)}
+          </p>
+        </div>
+        <div className="rounded-xl bg-[#f9fcff] px-3 py-2">
+          <p className="text-[11px] uppercase tracking-wide text-[#6b7280]">API / Cache</p>
+          <p className="mt-1 text-sm font-semibold text-[#1a1a2e]">
+            {venue.apiCostEstimate.toFixed(1)} • {(venue.cacheHitRatio * 100).toFixed(0)}%
+          </p>
+        </div>
+      </div>
+
+      {venue.benchmarkComparison && (
+        <div className="mt-3 rounded-xl border border-[#d7f0df] bg-[#f4fbf6] px-3 py-3 text-sm text-[#1a1a2e]">
+          Hybrid {venue.benchmarkComparison.improvementPercent >= 0 ? "giảm" : "tăng"}{" "}
+          {Math.abs(venue.benchmarkComparison.improvementPercent).toFixed(1)}% generalized cost so với baseline heuristic.
+        </div>
+      )}
+
       <div className="mt-4 space-y-4">
         {venue.driverRoutes.map((route) => (
           <div key={route.driverId} className="rounded-xl border border-[#e8f9fd] bg-[#f9fcff] p-3">
@@ -36,6 +64,9 @@ function RoutePreviewCardComponent({ venue }: RoutePreviewCardProps) {
                 +{formatDuration(Math.max(0, route.totalTimeSeconds - route.directTimeSeconds))}
               </span>
             </div>
+            <p className="mt-2 text-xs text-[#6b7280]">
+              Generalized cost {formatDuration(route.generalizedCostSeconds)}
+            </p>
 
             <div className="mt-3 space-y-2">
               {route.stops.map((stop) => (
@@ -46,7 +77,13 @@ function RoutePreviewCardComponent({ venue }: RoutePreviewCardProps) {
                   <div className="min-w-0 flex-1">
                     <p className="text-sm font-medium text-[#1a1a2e]">{stop.label}</p>
                     <p className="text-xs text-[#6b7280]">
-                      ETA {formatDuration(stop.etaSeconds)}{stop.walkingDistanceMeters > 0 ? ` • đi bộ ${formatDistance(stop.walkingDistanceMeters)}` : ""}
+                      ETA {formatDuration(stop.etaSeconds)}
+                      {stop.walkingDistanceMeters > 0 ? ` • đi bộ ${formatDistance(stop.walkingDistanceMeters)}` : ""}
+                      {stop.waitSeconds > 0 ? ` • chờ ${formatDuration(stop.waitSeconds)}` : ""}
+                      {stop.isMergedStop ? " • điểm đón chung" : ""}
+                    </p>
+                    <p className="text-[11px] text-[#9ca3af]">
+                      {stop.stopAccessType} • cumulative {formatDistance(stop.cumulativeDistanceMeters)}
                     </p>
                   </div>
                 </div>

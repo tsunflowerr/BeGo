@@ -82,6 +82,10 @@ export interface MemberRoute {
   distanceMeters: number;
   driverId?: string | null;
   walkingDistanceMeters?: number;
+  rideDistanceMeters?: number;
+  rideTimeSeconds?: number;
+  waitTimeSeconds?: number;
+  burdenScore?: number;
 }
 
 export interface RouteStop {
@@ -92,7 +96,12 @@ export interface RouteStop {
   longitude: number;
   etaSeconds: number;
   distanceFromPreviousMeters: number;
+  cumulativeDistanceMeters: number;
+  cumulativeTimeSeconds: number;
   walkingDistanceMeters: number;
+  waitSeconds: number;
+  stopAccessType: string;
+  isMergedStop: boolean;
   passengerIds: string[];
 }
 
@@ -103,8 +112,39 @@ export interface DriverRoute {
   totalDistanceMeters: number;
   directTimeSeconds: number;
   directDistanceMeters: number;
+  generalizedCostSeconds: number;
   passengerIds: string[];
   stops: RouteStop[];
+}
+
+export interface RouteScoreBreakdown {
+  generalizedCostSeconds: number;
+  totalDriveSeconds: number;
+  totalWalkSeconds: number;
+  totalWaitSeconds: number;
+  detourPenaltySeconds: number;
+  fairnessPenaltySeconds: number;
+  stopComplexityPenaltySeconds: number;
+  riskPenaltySeconds: number;
+  stabilityPenaltySeconds: number;
+  venueQualityBonusSeconds: number;
+}
+
+export interface PlannerBenchmarkComparison {
+  baselinePlannerVersion: string;
+  improvedPlannerVersion: string;
+  baselineGeneralizedCostSeconds: number;
+  improvedGeneralizedCostSeconds: number;
+  improvementPercent: number;
+  baselineStopCount: number;
+  improvedStopCount: number;
+}
+
+export interface CacheDiagnostics {
+  cacheHits: number;
+  cacheMisses: number;
+  exactRouteApiCalls: number;
+  matrixApiCalls: number;
 }
 
 // Review from Google Places
@@ -130,6 +170,12 @@ export interface Venue {
   finalScore: number;
   maxDriverDetourSeconds: number;
   totalWalkingDistanceMeters: number;
+  plannerVersion: string;
+  apiCostEstimate: number;
+  cacheHitRatio: number;
+  scoreBreakdown: RouteScoreBreakdown;
+  benchmarkComparison?: PlannerBenchmarkComparison | null;
+  cacheDiagnostics?: CacheDiagnostics | null;
   memberRoutes: MemberRoute[];
   driverRoutes: DriverRoute[];
   photoUrls: string[];

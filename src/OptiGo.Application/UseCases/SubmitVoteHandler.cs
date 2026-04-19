@@ -16,6 +16,8 @@ public class SubmitVoteHandler : IRequestHandler<SubmitVoteCommand, SubmitVoteRe
     private readonly ISessionRepository _sessionRepository;
     private readonly IVenueRepository _venueRepository;
     private readonly IOutingRoutePlanner _outingRoutePlanner;
+    private readonly IBaselineOutingRoutePlanner _baselineOutingRoutePlanner;
+    private readonly IRouteBenchmarkRecorder _routeBenchmarkRecorder;
     private readonly IUnitOfWork _unitOfWork;
     private readonly ISessionNotifier _notifier;
     private readonly ILogger<SubmitVoteHandler> _logger;
@@ -24,6 +26,8 @@ public class SubmitVoteHandler : IRequestHandler<SubmitVoteCommand, SubmitVoteRe
         ISessionRepository sessionRepository,
         IVenueRepository venueRepository,
         IOutingRoutePlanner outingRoutePlanner,
+        IBaselineOutingRoutePlanner baselineOutingRoutePlanner,
+        IRouteBenchmarkRecorder routeBenchmarkRecorder,
         IUnitOfWork unitOfWork,
         ISessionNotifier notifier,
         ILogger<SubmitVoteHandler> logger)
@@ -31,6 +35,8 @@ public class SubmitVoteHandler : IRequestHandler<SubmitVoteCommand, SubmitVoteRe
         _sessionRepository = sessionRepository;
         _venueRepository = venueRepository;
         _outingRoutePlanner = outingRoutePlanner;
+        _baselineOutingRoutePlanner = baselineOutingRoutePlanner;
+        _routeBenchmarkRecorder = routeBenchmarkRecorder;
         _unitOfWork = unitOfWork;
         _notifier = notifier;
         _logger = logger;
@@ -69,6 +75,21 @@ public class SubmitVoteHandler : IRequestHandler<SubmitVoteCommand, SubmitVoteRe
                     throw new InvalidOperationException("Winning venue could not be loaded.");
 
                 var finalRoutePreview = await _outingRoutePlanner.PlanVenueAsync(session, winningVenue, cancellationToken);
+                var baselineRoutePreview = await _baselineOutingRoutePlanner.PlanVenueAsync(session, winningVenue, cancellationToken);
+                var baselineCost = baselineRoutePreview.ScoreBreakdown.GeneralizedCostSeconds;
+                finalRoutePreview.BenchmarkComparison = new PlannerBenchmarkComparisonDto
+                {
+                    BaselinePlannerVersion = baselineRoutePreview.PlannerVersion,
+                    ImprovedPlannerVersion = finalRoutePreview.PlannerVersion,
+                    BaselineGeneralizedCostSeconds = baselineCost,
+                    ImprovedGeneralizedCostSeconds = finalRoutePreview.ScoreBreakdown.GeneralizedCostSeconds,
+                    ImprovementPercent = baselineCost <= 0
+                        ? 0
+                        : Math.Round((baselineCost - finalRoutePreview.ScoreBreakdown.GeneralizedCostSeconds) / baselineCost * 100, 2),
+                    BaselineStopCount = baselineRoutePreview.DriverRoutes.Sum(route => route.Stops.Count(stop => stop.StopType.StartsWith("pickup", StringComparison.Ordinal))),
+                    ImprovedStopCount = finalRoutePreview.DriverRoutes.Sum(route => route.Stops.Count(stop => stop.StopType.StartsWith("pickup", StringComparison.Ordinal)))
+                };
+                await _routeBenchmarkRecorder.RecordComparisonAsync(session.Id, finalRoutePreview, baselineRoutePreview, cancellationToken);
 
                 session.ChangeStatus(SessionStatus.RoutePreview);
                 session.SetFinalRouteSnapshot(JsonSerializer.Serialize(finalRoutePreview));

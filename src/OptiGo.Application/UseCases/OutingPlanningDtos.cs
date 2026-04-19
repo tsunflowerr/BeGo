@@ -22,6 +22,7 @@ public class DriverRouteDto
     public double TotalDistanceMeters { get; init; }
     public double DirectTimeSeconds { get; init; }
     public double DirectDistanceMeters { get; init; }
+    public double GeneralizedCostSeconds { get; init; }
     public List<Guid> PassengerIds { get; init; } = new();
     public List<RouteStopDto> Stops { get; init; } = new();
 }
@@ -35,6 +36,11 @@ public class RouteStopDto
     public double Longitude { get; init; }
     public double EtaSeconds { get; init; }
     public double DistanceFromPreviousMeters { get; init; }
+    public double CumulativeDistanceMeters { get; init; }
+    public double CumulativeTimeSeconds { get; init; }
     public double WalkingDistanceMeters { get; init; }
+    public double WaitSeconds { get; init; }
+    public string StopAccessType { get; init; } = string.Empty;
+    public bool IsMergedStop { get; init; }
     public List<Guid> PassengerIds { get; init; } = new();
 }

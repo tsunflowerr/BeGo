@@ -13,15 +13,19 @@ public class FindMeetPointHandler : IRequestHandler<FindMeetPointCommand, FindMe
 {
     private const double InitialVenueSearchRadiusMeters = 500;
     private const int DesiredNearbyVenueCount = 50;
-    private const int FilteredVenueCount = 25;
+    private const int FilteredVenueCount = 15;
     private const int FinalVenueCount = 3;
+    private const int PlanningConcurrency = 3;
 
     private readonly ISessionRepository _sessionRepository;
     private readonly IVenueRepository _venueRepository;
     private readonly IPlacesProvider _placesProvider;
-    private readonly ITravelTimeService _travelTimeService;
     private readonly IAIService _aiService;
     private readonly IOutingRoutePlanner _outingRoutePlanner;
+    private readonly IVenuePrefilter _venuePrefilter;
+    private readonly IVenueEvaluator _venueEvaluator;
+    private readonly IBaselineOutingRoutePlanner _baselineOutingRoutePlanner;
+    private readonly IRouteBenchmarkRecorder _routeBenchmarkRecorder;
     private readonly IUnitOfWork _unitOfWork;
     private readonly ISessionNotifier _notifier;
     private readonly ILogger<FindMeetPointHandler> _logger;
@@ -30,9 +34,12 @@ public class FindMeetPointHandler : IRequestHandler<FindMeetPointCommand, FindMe
         ISessionRepository sessionRepository,
         IVenueRepository venueRepository,
         IPlacesProvider placesProvider,
-        ITravelTimeService travelTimeService,
         IAIService aiService,
         IOutingRoutePlanner outingRoutePlanner,
+        IVenuePrefilter venuePrefilter,
+        IVenueEvaluator venueEvaluator,
+        IBaselineOutingRoutePlanner baselineOutingRoutePlanner,
+        IRouteBenchmarkRecorder routeBenchmarkRecorder,
         IUnitOfWork unitOfWork,
         ISessionNotifier notifier,
         ILogger<FindMeetPointHandler> logger)
@@ -40,9 +47,12 @@ public class FindMeetPointHandler : IRequestHandler<FindMeetPointCommand, FindMe
         _sessionRepository = sessionRepository;
         _venueRepository = venueRepository;
         _placesProvider = placesProvider;
-        _travelTimeService = travelTimeService;
         _aiService = aiService;
         _outingRoutePlanner = outingRoutePlanner;
+        _venuePrefilter = venuePrefilter;
+        _venueEvaluator = venueEvaluator;
+        _baselineOutingRoutePlanner = baselineOutingRoutePlanner;
+        _routeBenchmarkRecorder = routeBenchmarkRecorder;
         _unitOfWork = unitOfWork;
         _notifier = notifier;
         _logger = logger;
@@ -76,8 +86,7 @@ public class FindMeetPointHandler : IRequestHandler<FindMeetPointCommand, FindMe
 
         try
         {
-            var membersList = session.Members.ToList();
-            var geometricMedian = WeightedGeometricMedianCalculator.Calculate(membersList);
+            var geometricMedian = OutingSearchCenterCalculator.Calculate(session);
             _logger.LogInformation(
                 "Calculated weighted search center for Session {Id}: {Lat}, {Lng}",
                 session.Id,
@@ -106,19 +115,18 @@ public class FindMeetPointHandler : IRequestHandler<FindMeetPointCommand, FindMe
                 throw new InvalidOperationException("No venues found around the median point.");
             }
 
-            var filteredVenues = CandidateFilter.FilterTopCandidates(
-                membersList,
+            var filteredVenues = await _venuePrefilter.FilterTopCandidatesAsync(
+                session,
                 rawVenues,
-                topN: FilteredVenueCount);
-            var plannedCandidates = new List<CandidateResultDto>();
-            foreach (var venue in filteredVenues)
-            {
-                plannedCandidates.Add(await _outingRoutePlanner.PlanVenueAsync(session, venue, cancellationToken));
-            }
+                topN: FilteredVenueCount,
+                cancellationToken);
+            var plannedCandidates = await PlanCandidatesAsync(session, filteredVenues, cancellationToken);
 
-            var scoredCandidates = ScoreCandidates(plannedCandidates).Take(FinalVenueCount).ToList();
+            var scoredCandidates = _venueEvaluator.RankCandidates(plannedCandidates, FinalVenueCount).ToList();
             var top3VenueHashes = new HashSet<string>(scoredCandidates.Select(s => s.VenueId));
             var top3VenueEntities = filteredVenues.Where(v => top3VenueHashes.Contains(v.Id)).ToList();
+
+            await AttachBenchmarksAsync(session, scoredCandidates, top3VenueEntities, cancellationToken);
 
             await _venueRepository.AddRangeAsync(top3VenueEntities, cancellationToken);
             session.SetNominatedVenues(scoredCandidates.Select(s => s.VenueId));
@@ -198,6 +206,12 @@ public class FindMeetPointHandler : IRequestHandler<FindMeetPointCommand, FindMe
                 FinalScore = score.FinalScore,
                 MaxDriverDetourSeconds = score.MaxDriverDetourSeconds,
                 TotalWalkingDistanceMeters = score.TotalWalkingDistanceMeters,
+                PlannerVersion = score.PlannerVersion,
+                ApiCostEstimate = score.ApiCostEstimate,
+                CacheHitRatio = score.CacheHitRatio,
+                ScoreBreakdown = score.ScoreBreakdown,
+                BenchmarkComparison = score.BenchmarkComparison,
+                CacheDiagnostics = score.CacheDiagnostics,
                 MemberRoutes = score.MemberRoutes,
                 DriverRoutes = score.DriverRoutes,
                 PhotoUrls = placeDetail?.PhotoUrls ?? new List<string>(),
@@ -215,68 +229,58 @@ public class FindMeetPointHandler : IRequestHandler<FindMeetPointCommand, FindMe
         return results;
     }
 
-    private static List<CandidateResultDto> ScoreCandidates(IReadOnlyList<CandidateResultDto> candidates)
+    private async Task<List<CandidateResultDto>> PlanCandidatesAsync(
+        Session session,
+        IReadOnlyList<Venue> venues,
+        CancellationToken cancellationToken)
     {
-        if (candidates.Count == 0)
-            return [];
-
-        var stats = candidates.Select(candidate =>
+        var semaphore = new SemaphoreSlim(PlanningConcurrency);
+        var tasks = venues.Select(async venue =>
         {
-            var times = candidate.MemberRoutes.Select(route => route.EstimatedTimeSeconds).ToList();
-            var meanTime = times.Count == 0 ? 0 : times.Average();
-            var stdDev = times.Count == 0
-                ? 0
-                : Math.Sqrt(times.Sum(time => Math.Pow(time - meanTime, 2)) / times.Count);
-
-            return new
+            await semaphore.WaitAsync(cancellationToken);
+            try
             {
-                Candidate = candidate,
-                candidate.TotalTimeSeconds,
-                Fairness = stdDev,
-                candidate.MaxDriverDetourSeconds,
-                candidate.TotalWalkingDistanceMeters,
-                QualityPenalty = candidate.Rating > 0 ? 5.0 - candidate.Rating : 2.0
-            };
-        }).ToList();
+                return await _outingRoutePlanner.PlanVenueAsync(session, venue, cancellationToken);
+            }
+            finally
+            {
+                semaphore.Release();
+            }
+        });
 
-        var minTotal = stats.Min(x => x.TotalTimeSeconds);
-        var maxTotal = stats.Max(x => x.TotalTimeSeconds);
-        var minFairness = stats.Min(x => x.Fairness);
-        var maxFairness = stats.Max(x => x.Fairness);
-        var minDetour = stats.Min(x => x.MaxDriverDetourSeconds);
-        var maxDetour = stats.Max(x => x.MaxDriverDetourSeconds);
-        var minWalking = stats.Min(x => x.TotalWalkingDistanceMeters);
-        var maxWalking = stats.Max(x => x.TotalWalkingDistanceMeters);
-        var minQuality = stats.Min(x => x.QualityPenalty);
-        var maxQuality = stats.Max(x => x.QualityPenalty);
-
-        foreach (var stat in stats)
-        {
-            var normalizedTotal = Normalize(stat.TotalTimeSeconds, minTotal, maxTotal);
-            var normalizedFairness = Normalize(stat.Fairness, minFairness, maxFairness);
-            var normalizedDetour = Normalize(stat.MaxDriverDetourSeconds, minDetour, maxDetour);
-            var normalizedWalking = Normalize(stat.TotalWalkingDistanceMeters, minWalking, maxWalking);
-            var normalizedQuality = Normalize(stat.QualityPenalty, minQuality, maxQuality);
-
-            stat.Candidate.FinalScore =
-                normalizedTotal * 0.45 +
-                normalizedDetour * 0.20 +
-                normalizedFairness * 0.15 +
-                normalizedWalking * 0.10 +
-                normalizedQuality * 0.10;
-        }
-
-        return stats
-            .Select(x => x.Candidate)
-            .OrderBy(candidate => candidate.FinalScore)
+        return (await Task.WhenAll(tasks))
             .ToList();
     }
 
-    private static double Normalize(double value, double min, double max)
+    private async Task AttachBenchmarksAsync(
+        Session session,
+        IReadOnlyList<CandidateResultDto> improvedCandidates,
+        IReadOnlyList<Venue> topVenues,
+        CancellationToken cancellationToken)
     {
-        if (Math.Abs(max - min) < 0.0001)
-            return 0;
+        var venuesById = topVenues.ToDictionary(venue => venue.Id);
+        foreach (var candidate in improvedCandidates)
+        {
+            if (!venuesById.TryGetValue(candidate.VenueId, out var venue))
+                continue;
 
-        return (value - min) / (max - min);
+            var baseline = await _baselineOutingRoutePlanner.PlanVenueAsync(session, venue, cancellationToken);
+            var baselineCost = baseline.ScoreBreakdown.GeneralizedCostSeconds;
+            var improvedCost = candidate.ScoreBreakdown.GeneralizedCostSeconds;
+            candidate.BenchmarkComparison = new PlannerBenchmarkComparisonDto
+            {
+                BaselinePlannerVersion = baseline.PlannerVersion,
+                ImprovedPlannerVersion = candidate.PlannerVersion,
+                BaselineGeneralizedCostSeconds = baselineCost,
+                ImprovedGeneralizedCostSeconds = improvedCost,
+                ImprovementPercent = baselineCost <= 0
+                    ? 0
+                    : Math.Round((baselineCost - improvedCost) / baselineCost * 100, 2),
+                BaselineStopCount = baseline.DriverRoutes.Sum(route => route.Stops.Count(stop => stop.StopType.StartsWith("pickup", StringComparison.Ordinal))),
+                ImprovedStopCount = candidate.DriverRoutes.Sum(route => route.Stops.Count(stop => stop.StopType.StartsWith("pickup", StringComparison.Ordinal)))
+            };
+
+            await _routeBenchmarkRecorder.RecordComparisonAsync(session.Id, candidate, baseline, cancellationToken);
+        }
     }
 }

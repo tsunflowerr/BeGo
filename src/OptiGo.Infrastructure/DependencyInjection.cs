@@ -48,7 +48,15 @@ public static class DependencyInjection
             client.Timeout = TimeSpan.FromSeconds(30);
         });
 
-        services.AddScoped<IOutingRoutePlanner, HeuristicOutingRoutePlanner>();
+        services.AddSingleton<ITrafficSnapshotProvider, DefaultTrafficSnapshotProvider>();
+        services.AddSingleton<IRouteCostProvider, CachedRouteCostProvider>();
+        services.AddScoped<IVenuePrefilter, RouteAwareVenuePrefilter>();
+        services.AddScoped<IStopCandidateGenerator, StopCandidateGenerator>();
+        services.AddScoped<IDriverRouteOptimizer, SharedDestinationRouteOptimizer>();
+        services.AddScoped<IVenueEvaluator, DefaultVenueEvaluator>();
+        services.AddScoped<IBaselineOutingRoutePlanner, BaselineOutingRoutePlanner>();
+        services.AddScoped<IRouteBenchmarkRecorder, LoggingRouteBenchmarkRecorder>();
+        services.AddScoped<IOutingRoutePlanner, HybridOutingRoutePlanner>();
 
         services.Configure<GroqOptions>(configuration.GetSection("Groq"));
         services.AddHttpClient<IAIService, GroqAIService>(client =>
