@@ -16,11 +16,26 @@ function RoutePreviewCardComponent({ venue }: RoutePreviewCardProps) {
           <p className="mt-1 text-sm text-[#6b7280]">
             Tổng thời gian nhóm: {formatDuration(venue.totalTimeSeconds)} • Tổng đi bộ: {formatDistance(venue.totalWalkingDistanceMeters)}
           </p>
+          {venue.optimizationReason && (
+            <p className="mt-2 text-sm text-[#475569]">{venue.optimizationReason}</p>
+          )}
         </div>
         <span className="rounded-full bg-[#59ce8f]/10 px-2.5 py-1 text-[11px] font-medium text-[#2b8a57]">
           Detour max {formatDuration(venue.maxDriverDetourSeconds)}
         </span>
       </div>
+
+      {venue.tradeOffSummary && (
+        <div className="mt-3 rounded-xl bg-[#f9fcff] px-3 py-2 text-sm text-[#475569]">
+          {venue.tradeOffSummary}
+        </div>
+      )}
+
+      {!venue.isFeasible && venue.feasibilityIssues?.length > 0 && (
+        <div className="mt-3 rounded-xl bg-[#fff5d6] px-3 py-2 text-sm text-[#9a6700]">
+          {venue.feasibilityIssues.join(" ")}
+        </div>
+      )}
 
       <div className="mt-3 grid grid-cols-1 gap-2 md:grid-cols-3">
         <div className="rounded-xl bg-[#f9fcff] px-3 py-2">
@@ -73,6 +88,7 @@ function RoutePreviewCardComponent({ venue }: RoutePreviewCardProps) {
                       ETA {formatDuration(stop.etaSeconds)}
                       {stop.walkingDistanceMeters > 0 ? ` • đi bộ ${formatDistance(stop.walkingDistanceMeters)}` : ""}
                       {stop.waitSeconds > 0 ? ` • chờ ${formatDuration(stop.waitSeconds)}` : ""}
+                      {stop.serviceTimeSeconds > 0 ? ` • dừng ${formatDuration(stop.serviceTimeSeconds)}` : ""}
                       {stop.isMergedStop ? " • điểm đón chung" : ""}
                     </p>
                     <p className="text-[11px] text-[#9ca3af]">

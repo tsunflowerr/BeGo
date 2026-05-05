@@ -65,15 +65,6 @@ public class FindMeetPointHandler : IRequestHandler<FindMeetPointCommand, FindMe
             return new FindMeetPointResult { IsSuccess = false, ErrorMessage = "Session has no members." };
         }
 
-        if (session.HasPendingPickupRequests())
-        {
-            return new FindMeetPointResult
-            {
-                IsSuccess = false,
-                ErrorMessage = "Please resolve all pickup requests before optimizing venues."
-            };
-        }
-
         session.ChangeStatus(SessionStatus.Computing);
         await _unitOfWork.SaveChangesAsync(cancellationToken);
         await _notifier.NotifyComputingStartedAsync(session.Id, cancellationToken);
@@ -198,6 +189,12 @@ public class FindMeetPointHandler : IRequestHandler<FindMeetPointCommand, FindMe
                 FinalScore = score.FinalScore,
                 MaxDriverDetourSeconds = score.MaxDriverDetourSeconds,
                 TotalWalkingDistanceMeters = score.TotalWalkingDistanceMeters,
+                IsFeasible = score.IsFeasible,
+                FeasibilityIssues = score.FeasibilityIssues,
+                RecommendationType = score.RecommendationType,
+                OptimizationReason = score.OptimizationReason,
+                TradeOffSummary = score.TradeOffSummary,
+                Metrics = score.Metrics,
                 ScoreBreakdown = score.ScoreBreakdown,
                 MemberRoutes = score.MemberRoutes,
                 DriverRoutes = score.DriverRoutes,

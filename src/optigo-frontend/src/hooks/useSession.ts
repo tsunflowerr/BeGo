@@ -6,6 +6,7 @@ import {
   Session,
   Member,
   PickupRequest,
+  PickupSuggestion,
   SessionStatus,
   OptimizationResult,
   Venue,
@@ -15,6 +16,7 @@ import {
   OptimizationCompletedEvent,
   VoteSubmittedEvent,
   VotingCompletedEvent,
+  Vote,
 } from "@/types";
 import { useSignalR } from "./useSignalR";
 
@@ -28,6 +30,7 @@ interface UseSessionReturn {
   session: Session | null;
   members: Member[];
   pickupRequests: PickupRequest[];
+  pickupSuggestions: PickupSuggestion[];
   isHost: boolean;
   currentMember: Member | null;
   
@@ -66,6 +69,7 @@ export function useSession({ sessionId, memberId }: UseSessionOptions): UseSessi
   const [session, setSession] = useState<Session | null>(null);
   const [members, setMembers] = useState<Member[]>([]);
   const [pickupRequests, setPickupRequests] = useState<PickupRequest[]>([]);
+  const [pickupSuggestions, setPickupSuggestions] = useState<PickupSuggestion[]>([]);
   const [optimizationResult, setOptimizationResult] = useState<OptimizationResult | null>(null);
   const [winningVenueId, setWinningVenueId] = useState<string | null>(null);
   const [finalRoutePreview, setFinalRoutePreview] = useState<Venue | null>(null);
@@ -77,6 +81,19 @@ export function useSession({ sessionId, memberId }: UseSessionOptions): UseSessi
   
   const loadedRef = useRef(false);
 
+  const appendVote = useCallback((vote: Vote) => {
+    setSession((prev) => {
+      if (!prev || prev.votes.some((existing) => existing.memberId === vote.memberId)) {
+        return prev;
+      }
+
+      return {
+        ...prev,
+        votes: [...prev.votes, vote],
+      };
+    });
+  }, []);
+
   // Fetch session data
   const refreshSession = useCallback(async () => {
     try {
@@ -85,6 +102,8 @@ export function useSession({ sessionId, memberId }: UseSessionOptions): UseSessi
       setSession(data);
       setMembers(data.members || []);
       setPickupRequests(data.pickupRequests || []);
+      const hasPendingPickup = (data.pickupRequests || []).some((request) => request.status === "Pending");
+      setPickupSuggestions(hasPendingPickup ? await api.sessions.getPickupSuggestions(sessionId) : []);
       setOptimizationResult(data.latestOptimizationResult || null);
       setWinningVenueId(data.winningVenueId || null);
       setFinalRoutePreview(data.finalRoutePreview || null);
@@ -136,11 +155,12 @@ export function useSession({ sessionId, memberId }: UseSessionOptions): UseSessi
   }, [members.length]);
 
   const handleVoteSubmitted = useCallback((event: VoteSubmittedEvent) => {
+    appendVote({ memberId: event.memberId, venueId: event.venueId });
     setVotingProgress({ total: event.totalMembers, voted: event.totalVotes });
     if (event.memberId === memberId) {
       setHasVoted(true);
     }
-  }, [memberId]);
+  }, [appendVote, memberId]);
 
   const handleVotingCompleted = useCallback((event: VotingCompletedEvent) => {
     setWinningVenueId(event.winningVenueId);
@@ -181,6 +201,10 @@ export function useSession({ sessionId, memberId }: UseSessionOptions): UseSessi
     }
   }, [refreshSession]);
 
+  useEffect(() => {
+    setHasVoted(!!memberId && (session?.votes || []).some((vote) => vote.memberId === memberId));
+  }, [memberId, session?.votes]);
+
   // Start optimization
   const startOptimization = useCallback(async (query?: string) => {
     try {
@@ -210,6 +234,7 @@ export function useSession({ sessionId, memberId }: UseSessionOptions): UseSessi
     try {
       setError(null);
       const response = await api.vote.submit(sessionId, memberId, venueId);
+      appendVote({ memberId, venueId });
       setHasVoted(true);
       
       if (response.isVotingCompleted && response.winningVenueId) {
@@ -220,7 +245,7 @@ export function useSession({ sessionId, memberId }: UseSessionOptions): UseSessi
     } catch (err) {
       setError(err instanceof Error ? err.message : "Không thể gửi bình chọn");
     }
-  }, [sessionId, memberId, refreshSession]);
+  }, [appendVote, sessionId, memberId, refreshSession]);
 
   const acceptPickupRequest = useCallback(async (requestId: string, driverId: string) => {
     try {
@@ -265,6 +290,7 @@ export function useSession({ sessionId, memberId }: UseSessionOptions): UseSessi
     session,
     members,
     pickupRequests,
+    pickupSuggestions,
     isHost,
     currentMember,
     optimizationResult,

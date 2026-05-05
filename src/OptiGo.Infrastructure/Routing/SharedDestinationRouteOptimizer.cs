@@ -7,8 +7,8 @@ namespace OptiGo.Infrastructure.Routing;
 
 public class SharedDestinationRouteOptimizer : IDriverRouteOptimizer
 {
-    private const int ExactPermutationThreshold = 7;
-    private const int MaxCoveringSolutions = 256;
+    private const int ExactPermutationThreshold = RoutingDefaults.ExactRouteStopLimit;
+    private const int MaxCoveringSolutions = RoutingDefaults.MaxAssignmentSolutions;
 
     private readonly IStopCandidateGenerator _stopCandidateGenerator;
     private readonly IRouteCostProvider _routeCostProvider;
@@ -30,7 +30,8 @@ public class SharedDestinationRouteOptimizer : IDriverRouteOptimizer
             return await BuildDirectDriverResultAsync(input, ct);
         }
 
-        var candidates = await _stopCandidateGenerator.GenerateAsync(input, ct);
+        var rawCandidates = await _stopCandidateGenerator.GenerateAsync(input, ct);
+        var candidates = await FilterAndRankCandidatesAsync(input, rawCandidates, ct);
         var optionsByPassenger = input.Passengers.ToDictionary(
             passenger => passenger.Id,
             passenger => candidates
@@ -59,6 +60,112 @@ public class SharedDestinationRouteOptimizer : IDriverRouteOptimizer
         }
 
         return best ?? await BuildDirectDriverResultAsync(input, ct);
+    }
+
+    private async Task<IReadOnlyList<StopCandidate>> FilterAndRankCandidatesAsync(
+        DriverOptimizationInput input,
+        IReadOnlyList<StopCandidate> candidates,
+        CancellationToken ct)
+    {
+        if (candidates.Count == 0)
+            return [];
+
+        var passengerIds = input.Passengers.Select(passenger => passenger.Id).ToHashSet();
+        var walkFeasible = candidates
+            .Where(candidate => candidate.PassengerIds.All(passengerIds.Contains))
+            .Where(candidate => candidate.WalkingDistancesMeters.Values.All(IsWalkFeasible))
+            .ToList();
+
+        if (walkFeasible.Count == 0)
+            return candidates;
+
+        var driverLocation = input.Driver.GetLocation();
+        var venueLocation = input.Venue.GetLocation();
+        var context = new RouteCostContext(input.PreferTrafficAwareRoutes, input.TrafficSnapshot.BucketKey);
+        var directRoute = await _routeCostProvider.GetExactRouteAsync(
+            driverLocation,
+            venueLocation,
+            input.Driver.TransportMode,
+            context,
+            ct);
+        var stopLocations = walkFeasible.Select(candidate => candidate.StopLocation).ToList();
+        var fromDriver = await _routeCostProvider.GetEstimatedMatrixAsync(
+            [driverLocation],
+            stopLocations,
+            input.Driver.TransportMode,
+            context,
+            ct);
+        var toVenue = await _routeCostProvider.GetEstimatedMatrixAsync(
+            stopLocations,
+            [venueLocation],
+            input.Driver.TransportMode,
+            context,
+            ct);
+
+        var estimatesByCandidateId = new Dictionary<string, CandidateEstimate>(StringComparer.Ordinal);
+        for (var index = 0; index < walkFeasible.Count; index++)
+        {
+            var candidate = walkFeasible[index];
+            var detourLowerBoundSeconds = Math.Max(
+                0,
+                fromDriver.Durations[0, index] + toVenue.Durations[index, 0] - directRoute.DurationSeconds);
+
+            estimatesByCandidateId[candidate.CandidateId] = new CandidateEstimate(
+                candidate,
+                detourLowerBoundSeconds,
+                fromDriver.Distances[0, index] + toVenue.Distances[index, 0]);
+        }
+
+        var filtered = walkFeasible
+            .Where(candidate =>
+            {
+                var estimate = estimatesByCandidateId[candidate.CandidateId];
+                return candidate.StopAccessType == "doorstep" ||
+                       estimate.DetourLowerBoundSeconds <= RoutingDefaults.MaxDriverDetourSeconds;
+            })
+            .ToList();
+
+        if (filtered.Count == 0)
+        {
+            filtered = walkFeasible
+                .Where(candidate => candidate.StopAccessType == "doorstep")
+                .ToList();
+        }
+
+        var selectedIds = new HashSet<string>(StringComparer.Ordinal);
+        foreach (var passenger in input.Passengers)
+        {
+            var passengerOptions = filtered
+                .Where(candidate => candidate.PassengerIds.Contains(passenger.Id))
+                .OrderBy(candidate => ScoreCandidateForPassenger(candidate, passenger.Id, estimatesByCandidateId))
+                .Take(RoutingDefaults.MaxStopsPerPassenger)
+                .ToList();
+
+            if (passengerOptions.Count == 0)
+            {
+                passengerOptions = walkFeasible
+                    .Where(candidate =>
+                        candidate.StopAccessType == "doorstep" &&
+                        candidate.PassengerIds.Count == 1 &&
+                        candidate.PassengerIds[0] == passenger.Id)
+                    .ToList();
+            }
+
+            foreach (var candidate in passengerOptions)
+            {
+                selectedIds.Add(candidate.CandidateId);
+            }
+        }
+
+        var selected = filtered
+            .Where(candidate => selectedIds.Contains(candidate.CandidateId))
+            .OrderBy(candidate => estimatesByCandidateId.TryGetValue(candidate.CandidateId, out var estimate)
+                ? estimate.DetourLowerBoundSeconds
+                : 0)
+            .ThenBy(candidate => candidate.AccessPenaltySeconds + candidate.RiskPenaltySeconds)
+            .ToList();
+
+        return selected.Count > 0 ? selected : walkFeasible;
     }
 
     private List<List<StopCandidate>> BuildCoveringSolutions(
@@ -127,44 +234,102 @@ public class SharedDestinationRouteOptimizer : IDriverRouteOptimizer
 
         if (chosenStops.Count <= ExactPermutationThreshold)
         {
-            var bestOrder = chosenStops.ToList();
-            var bestCost = double.MaxValue;
-            await EvaluatePermutationsAsync(input, chosenStops.ToList(), 0, ct, async order =>
-            {
-                var cost = await EstimateDriverCostAsync(input, order, ct);
-                if (cost < bestCost)
-                {
-                    bestCost = cost;
-                    bestOrder = order.ToList();
-                }
-            });
-
-            return bestOrder;
+            return await SolveOpenPathTspExactDpAsync(input, chosenStops.ToList(), ct);
         }
 
         var ordered = await BuildCheapestInsertionOrderAsync(input, chosenStops.ToList(), ct);
         return await ImproveWithRelocateAndTwoOptAsync(input, ordered, ct);
     }
 
-    private async Task EvaluatePermutationsAsync(
+    private async Task<List<StopCandidate>> SolveOpenPathTspExactDpAsync(
         DriverOptimizationInput input,
-        List<StopCandidate> items,
-        int index,
-        CancellationToken ct,
-        Func<List<StopCandidate>, Task> onPermutation)
+        IReadOnlyList<StopCandidate> stops,
+        CancellationToken ct)
     {
-        if (index >= items.Count)
+        var n = stops.Count;
+        if (n <= 1)
         {
-            await onPermutation(items);
-            return;
+            return stops.ToList();
         }
 
-        for (var i = index; i < items.Count; i++)
+        var matrix = await BuildRouteMatrixAsync(input, stops, ct);
+        var stateCount = 1 << n;
+        var dp = new double[stateCount, n];
+        var parent = new int[stateCount, n];
+
+        for (var mask = 0; mask < stateCount; mask++)
         {
-            (items[index], items[i]) = (items[i], items[index]);
-            await EvaluatePermutationsAsync(input, items, index + 1, ct, onPermutation);
-            (items[index], items[i]) = (items[i], items[index]);
+            for (var last = 0; last < n; last++)
+            {
+                dp[mask, last] = double.PositiveInfinity;
+                parent[mask, last] = -1;
+            }
         }
+
+        for (var stopIndex = 0; stopIndex < n; stopIndex++)
+        {
+            var mask = 1 << stopIndex;
+            dp[mask, stopIndex] =
+                matrix.Durations[0, stopIndex + 1] +
+                GetServiceTimeSeconds(stops[stopIndex]);
+        }
+
+        for (var mask = 1; mask < stateCount; mask++)
+        {
+            for (var last = 0; last < n; last++)
+            {
+                if ((mask & (1 << last)) == 0 || double.IsPositiveInfinity(dp[mask, last]))
+                    continue;
+
+                for (var next = 0; next < n; next++)
+                {
+                    if ((mask & (1 << next)) != 0)
+                        continue;
+
+                    var nextMask = mask | (1 << next);
+                    var proposal =
+                        dp[mask, last] +
+                        matrix.Durations[last + 1, next + 1] +
+                        GetServiceTimeSeconds(stops[next]);
+
+                    if (proposal + 1e-6 < dp[nextMask, next])
+                    {
+                        dp[nextMask, next] = proposal;
+                        parent[nextMask, next] = last;
+                    }
+                }
+            }
+        }
+
+        var fullMask = stateCount - 1;
+        var bestLast = 0;
+        var bestCost = double.PositiveInfinity;
+        var venueIndex = n + 1;
+
+        for (var last = 0; last < n; last++)
+        {
+            var totalCost = dp[fullMask, last] + matrix.Durations[last + 1, venueIndex];
+            if (totalCost < bestCost)
+            {
+                bestCost = totalCost;
+                bestLast = last;
+            }
+        }
+
+        var order = new List<StopCandidate>(n);
+        var currentMask = fullMask;
+        var currentLast = bestLast;
+
+        while (currentLast >= 0)
+        {
+            order.Add(stops[currentLast]);
+            var previous = parent[currentMask, currentLast];
+            currentMask &= ~(1 << currentLast);
+            currentLast = previous;
+        }
+
+        order.Reverse();
+        return order;
     }
 
     private async Task<List<StopCandidate>> BuildCheapestInsertionOrderAsync(
@@ -287,13 +452,33 @@ public class SharedDestinationRouteOptimizer : IDriverRouteOptimizer
         foreach (var stop in orderedStops)
         {
             var leg = await GetRouteAsync(current, stop.StopLocation, input.Driver.TransportMode, input, ct);
-            elapsedSeconds += leg.DurationSeconds + stop.AccessPenaltySeconds;
+            elapsedSeconds += leg.DurationSeconds + GetServiceTimeSeconds(stop) + stop.AccessPenaltySeconds;
             current = stop.StopLocation;
         }
 
         var venueLeg = await GetRouteAsync(current, input.Venue.GetLocation(), input.Driver.TransportMode, input, ct);
         elapsedSeconds += venueLeg.DurationSeconds;
         return elapsedSeconds + orderedStops.Count * RoutingDefaults.StopComplexityWeight;
+    }
+
+    private async Task<TravelMatrixResult> BuildRouteMatrixAsync(
+        DriverOptimizationInput input,
+        IReadOnlyList<StopCandidate> stops,
+        CancellationToken ct)
+    {
+        var nodes = new List<Coordinate>(stops.Count + 2)
+        {
+            input.Driver.GetLocation()
+        };
+        nodes.AddRange(stops.Select(stop => stop.StopLocation));
+        nodes.Add(input.Venue.GetLocation());
+
+        return await _routeCostProvider.GetEstimatedMatrixAsync(
+            nodes,
+            nodes,
+            input.Driver.TransportMode,
+            new RouteCostContext(input.PreferTrafficAwareRoutes, input.TrafficSnapshot.BucketKey),
+            ct);
     }
 
     private async Task<DriverOptimizationResult> EvaluateRouteAsync(
@@ -323,6 +508,7 @@ public class SharedDestinationRouteOptimizer : IDriverRouteOptimizer
         };
 
         var pickupSnapshots = new Dictionary<Guid, PickupSnapshot>();
+        var routePolyline = new List<RoutePointDto> { ToRoutePoint(driverLocation) };
         var current = driverLocation;
         double elapsedSeconds = 0;
         double elapsedDistanceMeters = 0;
@@ -333,10 +519,12 @@ public class SharedDestinationRouteOptimizer : IDriverRouteOptimizer
         foreach (var stop in orderedStops)
         {
             var leg = await GetRouteAsync(current, stop.StopLocation, input.Driver.TransportMode, input, ct);
+            AppendGeometry(routePolyline, leg.Geometry, stop.StopLocation);
             elapsedSeconds += leg.DurationSeconds;
             elapsedDistanceMeters += leg.DistanceMeters;
             current = stop.StopLocation;
             riskPenaltySeconds += stop.RiskPenaltySeconds;
+            var serviceTimeSeconds = GetServiceTimeSeconds(stop);
 
             var maxWalkingMeters = stop.WalkingDistancesMeters.Count == 0
                 ? 0
@@ -360,6 +548,7 @@ public class SharedDestinationRouteOptimizer : IDriverRouteOptimizer
                 CumulativeTimeSeconds = elapsedSeconds,
                 WalkingDistanceMeters = maxWalkingMeters,
                 WaitSeconds = waitSeconds,
+                ServiceTimeSeconds = serviceTimeSeconds,
                 StopAccessType = stop.StopAccessType,
                 IsMergedStop = stop.IsMergedStop,
                 PassengerIds = stop.PassengerIds.ToList()
@@ -378,9 +567,12 @@ public class SharedDestinationRouteOptimizer : IDriverRouteOptimizer
                 walkSecondsTotal += walkingMeters / RoutingDefaults.WalkSpeedMetersPerSecond;
                 waitSecondsTotal += passengerWait;
             }
+
+            elapsedSeconds += serviceTimeSeconds;
         }
 
         var venueLeg = await GetRouteAsync(current, venueLocation, input.Driver.TransportMode, input, ct);
+        AppendGeometry(routePolyline, venueLeg.Geometry, venueLocation);
         elapsedSeconds += venueLeg.DurationSeconds;
         elapsedDistanceMeters += venueLeg.DistanceMeters;
         routeStops.Add(new RouteStopDto
@@ -426,7 +618,12 @@ public class SharedDestinationRouteOptimizer : IDriverRouteOptimizer
             })
             .ToList();
 
-        var detourPenaltySeconds = Math.Max(0, elapsedSeconds - directRoute.DurationSeconds) * RoutingDefaults.DetourWeight;
+        var rawDetourSeconds = Math.Max(0, elapsedSeconds - directRoute.DurationSeconds);
+        var detourPenaltySeconds = rawDetourSeconds * RoutingDefaults.DetourWeight;
+        if (rawDetourSeconds > RoutingDefaults.MaxDriverDetourSeconds)
+        {
+            detourPenaltySeconds += (rawDetourSeconds - RoutingDefaults.MaxDriverDetourSeconds) * 2.0;
+        }
         var fairnessPenaltySeconds = ComputeFairnessPenalty(passengerRoutes);
         var stopComplexityPenaltySeconds = orderedStops.Count * RoutingDefaults.StopComplexityWeight;
         var generalizedCost =
@@ -450,7 +647,8 @@ public class SharedDestinationRouteOptimizer : IDriverRouteOptimizer
                 DirectDistanceMeters = directRoute.DistanceMeters,
                 GeneralizedCostSeconds = generalizedCost,
                 PassengerIds = input.Passengers.Select(passenger => passenger.Id).ToList(),
-                Stops = routeStops
+                Stops = routeStops,
+                RoutePolyline = routePolyline
             },
             PassengerRoutes = passengerRoutes,
             CostBreakdown = new RouteScoreBreakdownDto
@@ -509,6 +707,9 @@ public class SharedDestinationRouteOptimizer : IDriverRouteOptimizer
                 StopAccessType = "destination"
             }
         };
+        var routePolyline = directRoute.Geometry.Count > 0
+            ? directRoute.Geometry.Select(ToRoutePoint).ToList()
+            : [ToRoutePoint(input.Driver.GetLocation()), ToRoutePoint(input.Venue.GetLocation())];
 
         return new DriverOptimizationResult
         {
@@ -522,7 +723,8 @@ public class SharedDestinationRouteOptimizer : IDriverRouteOptimizer
                 DirectDistanceMeters = directRoute.DistanceMeters,
                 GeneralizedCostSeconds = directRoute.DurationSeconds,
                 PassengerIds = new List<Guid>(),
-                Stops = routeStops
+                Stops = routeStops,
+                RoutePolyline = routePolyline
             },
             PassengerRoutes = Array.Empty<MemberRouteDto>(),
             CostBreakdown = new RouteScoreBreakdownDto
@@ -545,6 +747,60 @@ public class SharedDestinationRouteOptimizer : IDriverRouteOptimizer
             mode,
             new RouteCostContext(input.PreferTrafficAwareRoutes, input.TrafficSnapshot.BucketKey),
             ct);
+
+    private static bool IsWalkFeasible(double walkingMeters) =>
+        walkingMeters <= RoutingDefaults.MaxWalkDistanceMeters &&
+        walkingMeters / RoutingDefaults.WalkSpeedMetersPerSecond <= RoutingDefaults.MaxWalkSeconds;
+
+    private static RoutePointDto ToRoutePoint(Coordinate coordinate) =>
+        new()
+        {
+            Latitude = coordinate.Latitude,
+            Longitude = coordinate.Longitude
+        };
+
+    private static void AppendGeometry(
+        List<RoutePointDto> target,
+        IReadOnlyList<Coordinate> geometry,
+        Coordinate fallbackDestination)
+    {
+        var points = geometry.Count > 0 ? geometry : [fallbackDestination];
+        foreach (var point in points)
+        {
+            if (target.Count > 0 &&
+                Math.Abs(target[^1].Latitude - point.Latitude) < 1e-9 &&
+                Math.Abs(target[^1].Longitude - point.Longitude) < 1e-9)
+            {
+                continue;
+            }
+
+            target.Add(ToRoutePoint(point));
+        }
+    }
+
+    private static double GetServiceTimeSeconds(StopCandidate stop) =>
+        RoutingDefaults.BasePickupServiceSeconds +
+        stop.PassengerIds.Count * RoutingDefaults.BoardingServiceSecondsPerPassenger;
+
+    private static double ScoreCandidateForPassenger(
+        StopCandidate candidate,
+        Guid passengerId,
+        IReadOnlyDictionary<string, CandidateEstimate> estimatesByCandidateId)
+    {
+        var walkingMeters = candidate.WalkingDistancesMeters.TryGetValue(passengerId, out var value) ? value : 0;
+        var walkingSeconds = walkingMeters / RoutingDefaults.WalkSpeedMetersPerSecond;
+        var detourLowerBoundSeconds = estimatesByCandidateId.TryGetValue(candidate.CandidateId, out var estimate)
+            ? estimate.DetourLowerBoundSeconds
+            : 0;
+        var pickupDifficultySeconds = candidate.AccessPenaltySeconds + candidate.RiskPenaltySeconds;
+        var coverageBonusSeconds = Math.Max(0, candidate.PassengerIds.Count - 1) * 45;
+
+        return
+            0.35 * walkingSeconds +
+            0.30 * detourLowerBoundSeconds +
+            0.20 * pickupDifficultySeconds -
+            0.15 * coverageBonusSeconds;
+    }
 
     private static double ComputeFairnessPenalty(IReadOnlyList<MemberRouteDto> passengerRoutes)
     {
@@ -573,4 +829,9 @@ public class SharedDestinationRouteOptimizer : IDriverRouteOptimizer
         double WalkingDistanceMeters,
         double WaitSeconds,
         double RiskPenaltySeconds);
+
+    private sealed record CandidateEstimate(
+        StopCandidate Candidate,
+        double DetourLowerBoundSeconds,
+        double DriveDistanceMeters);
 }

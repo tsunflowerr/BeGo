@@ -14,6 +14,7 @@ public class MapboxOptions
 {
     public const string SectionName = "Mapbox";
     public string BaseUrl { get; set; } = "https://api.mapbox.com/directions-matrix/v1/mapbox";
+    public string SearchBoxBaseUrl { get; set; } = "https://api.mapbox.com/search/searchbox/v1";
     public string ApiKey { get; set; } = string.Empty;
 }
 
@@ -58,7 +59,8 @@ public class MapboxTravelTimeService : ITravelTimeService
         return new RouteResult
         {
             DurationSeconds = route.DurationSeconds * adjustmentFactor,
-            DistanceMeters = route.DistanceMeters
+            DistanceMeters = route.DistanceMeters,
+            Geometry = route.Geometry
         };
     }
 
@@ -217,7 +219,8 @@ public class MapboxTravelTimeService : ITravelTimeService
             $"{origin.Longitude:F6},{origin.Latitude:F6};{destination.Longitude:F6},{destination.Latitude:F6}");
 
         var url = $"https://api.mapbox.com/directions/v5/mapbox/{profile}/{coordinates}" +
-                  $"?overview=false" +
+                  $"?overview=full" +
+                  $"&geometries=geojson" +
                   $"&alternatives=false" +
                   $"&steps=false" +
                   $"&access_token={_options.ApiKey}";
@@ -242,7 +245,11 @@ public class MapboxTravelTimeService : ITravelTimeService
         return new MapboxRouteResult
         {
             DurationSeconds = route.Duration,
-            DistanceMeters = route.Distance
+            DistanceMeters = route.Distance,
+            Geometry = route.Geometry?.Coordinates?
+                .Where(coordinate => coordinate.Count >= 2)
+                .Select(coordinate => new Coordinate(coordinate[1], coordinate[0]))
+                .ToList() ?? [origin, destination]
         };
     }
 }
@@ -272,6 +279,15 @@ internal class MapboxDirectionsRoute
 
     [JsonPropertyName("distance")]
     public double Distance { get; set; }
+
+    [JsonPropertyName("geometry")]
+    public MapboxGeometry? Geometry { get; set; }
+}
+
+internal class MapboxGeometry
+{
+    [JsonPropertyName("coordinates")]
+    public List<List<double>>? Coordinates { get; set; }
 }
 
 internal class MapboxRouteResult
@@ -279,4 +295,6 @@ internal class MapboxRouteResult
     public double DurationSeconds { get; set; }
 
     public double DistanceMeters { get; set; }
+
+    public List<Coordinate> Geometry { get; set; } = new();
 }

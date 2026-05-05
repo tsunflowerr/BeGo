@@ -27,12 +27,31 @@ public class CandidateResultDto
     public double FinalScore { get; set; }
     public double MaxDriverDetourSeconds { get; set; }
     public double TotalWalkingDistanceMeters { get; set; }
+    public bool IsFeasible { get; set; } = true;
+    public List<string> FeasibilityIssues { get; set; } = new();
+    public string? RecommendationType { get; set; }
+    public string? OptimizationReason { get; set; }
+    public string? TradeOffSummary { get; set; }
+    public SolutionMetricsDto Metrics { get; set; } = new();
     public RouteScoreBreakdownDto ScoreBreakdown { get; set; } = new();
     public List<string> PhotoUrls { get; set; } = new();
     public string? AiReviewSummary { get; set; }
     public List<ReviewDto> TopReviews { get; set; } = new();
     public List<MemberRouteDto> MemberRoutes { get; set; } = new();
     public List<DriverRouteDto> DriverRoutes { get; set; } = new();
+}
+
+public class SolutionMetricsDto
+{
+    public double TotalGroupTimeSeconds { get; set; }
+    public double MaxPassengerTimeSeconds { get; set; }
+    public double StdPassengerTimeSeconds { get; set; }
+    public double TotalWalkingTimeSeconds { get; set; }
+    public double MaxWalkingTimeSeconds { get; set; }
+    public double MaxDriverDetourSeconds { get; set; }
+    public double TotalDriverDetourSeconds { get; set; }
+    public double VenueRating { get; set; }
+    public int StopCount { get; set; }
 }
 public class ReviewDto
 {

@@ -64,6 +64,7 @@ export default function RoomPage() {
     session,
     members,
     pickupRequests,
+    pickupSuggestions,
     isHost,
     currentMember,
     optimizationResult,
@@ -187,6 +188,17 @@ export default function RoomPage() {
     success("Đã gửi bình chọn của bạn!");
   }, [submitVote, success]);
 
+  const handleImpersonateMember = useCallback((nextMemberId: string) => {
+    const nextMember = members.find((member) => member.id === nextMemberId);
+    const existingVote = session?.votes?.find((vote) => vote.memberId === nextMemberId);
+
+    setMemberId(nextMemberId);
+    setHasJoined(true);
+    setSelectedVenueId(existingVote?.venueId ?? null);
+    localStorage.setItem(`room-${sessionId}-memberId`, nextMemberId);
+    info(`Dev: đang đóng vai ${nextMember?.name ?? "thành viên"} để bình chọn.`);
+  }, [info, members, session?.votes, sessionId]);
+
   const handleAcceptPickup = useCallback(async (requestId: string, driverId: string) => {
     await acceptPickupRequest(requestId, driverId);
     success("Đã nhận yêu cầu đón.");
@@ -218,6 +230,10 @@ export default function RoomPage() {
         ])
       )
     : undefined;
+  const currentVoteVenueId = memberId
+    ? session?.votes?.find((vote) => vote.memberId === memberId)?.venueId
+    : undefined;
+  const displaySelectedVenueId = currentVoteVenueId ?? selectedVenueId;
   const canAddTestMembers =
     isLocalDevUi &&
     hasJoined &&
@@ -365,12 +381,15 @@ export default function RoomPage() {
                   winningVenueId={winningVenueId || undefined}
                   showDistances={isRoutePreview || isCompleted}
                   memberDistances={memberDistances}
+                  isSelectable={isLocalDevUi && isVoting}
+                  onMemberSelect={handleImpersonateMember}
                 />
 
                 <div className="mt-4">
                   <PickupRequestPanel
                     members={members}
                     pickupRequests={pickupRequests}
+                    pickupSuggestions={pickupSuggestions}
                     currentMemberId={memberId || undefined}
                     onAccept={handleAcceptPickup}
                     onRelease={handleReleasePickup}
@@ -382,14 +401,13 @@ export default function RoomPage() {
                   <div className="mt-4 space-y-2">
                     {unresolvedPickupCount > 0 && (
                       <div className="rounded-xl bg-[#fff5d6] p-3 text-sm text-[#9a6700]">
-                        Cần xử lý {unresolvedPickupCount} yêu cầu đón trước khi tối ưu địa điểm.
+                        Còn {unresolvedPickupCount} yêu cầu đón chưa có tài xế. Hệ thống sẽ tự phân bổ khi tối ưu.
                       </div>
                     )}
                     <motion.button
                       onClick={handleStartOptimization}
-                      disabled={unresolvedPickupCount > 0}
-                      whileHover={unresolvedPickupCount > 0 ? {} : { scale: 1.02 }}
-                      whileTap={unresolvedPickupCount > 0 ? {} : { scale: 0.98 }}
+                      whileHover={{ scale: 1.02 }}
+                      whileTap={{ scale: 0.98 }}
                       className="flex w-full items-center justify-center gap-2 rounded-xl bg-gradient-to-r from-[#ff1e00] to-[#ff4d33] py-3.5 font-semibold text-white transition-all shadow-lg shadow-[#ff1e00]/30 disabled:cursor-not-allowed disabled:opacity-60"
                     >
                       <svg className="w-5 h-5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
@@ -442,7 +460,7 @@ export default function RoomPage() {
                         key={venue.venueId}
                         venue={venue}
                         rank={(index + 1) as 1 | 2 | 3}
-                        isSelected={selectedVenueId === venue.venueId || hasVoted && venue.venueId === selectedVenueId}
+                        isSelected={displaySelectedVenueId === venue.venueId}
                         canVote={!hasVoted}
                         currentMemberId={memberId || undefined}
                         onVote={handleVote}

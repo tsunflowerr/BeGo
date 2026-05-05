@@ -36,4 +36,5 @@ public class RouteResult
 {
     public double DurationSeconds { get; set; }
     public double DistanceMeters { get; set; }
+    public List<Coordinate> Geometry { get; set; } = new();
 }

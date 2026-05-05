@@ -2,7 +2,11 @@ namespace OptiGo.Infrastructure.Routing;
 
 internal static class RoutingDefaults
 {
-    public const double MaxWalkDistanceMeters = 400;
+    public const double MaxWalkDistanceMeters = 500;
+    public const double MaxWalkMinutes = 8;
+    public const double MaxWalkSeconds = MaxWalkMinutes * 60;
+    public const double MaxPassengerTotalTravelSeconds = 35 * 60;
+    public const double MaxDriverDetourSeconds = 15 * 60;
     public const double WalkSpeedMetersPerSecond = 1.25;
     public const double SyncBufferSeconds = 45;
     public const double RoadsideAccessPenaltySeconds = 20;
@@ -17,4 +21,19 @@ internal static class RoutingDefaults
     public const double StopComplexityWeight = 18;
     public const double StabilityWeight = 0.15;
     public const double QualityBonusCapSeconds = 240;
+    public const double BasePickupServiceSeconds = 60;
+    public const double BoardingServiceSecondsPerPassenger = 30;
+    public const int MaxStopsPerPassenger = 8;
+    public const int MaxSharedStopsPerCluster = 5;
+    public const int MaxDriverCorridorStops = 8;
+    public const int MaxVenueCandidates = 15;
+    public const int MaxAssignmentSolutions = 32;
+    public const int MaxRoutePoolCandidatesPerDriver = 50;
+    public const int MaxRoutePoolSolutions = 64;
+    public const int MaxRefinementIterations = 200;
+    public const int ExactRouteStopLimit = 9;
+    public const double StopDeduplicationMeters = 20;
+    public const double SharedClusterRadiusMeters = 500;
+    public const double DriverCorridorMeters = 300;
+    public const double ArrivalSpreadSoftLimitSeconds = 10 * 60;
 }

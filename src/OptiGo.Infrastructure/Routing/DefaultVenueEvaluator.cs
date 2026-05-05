@@ -37,7 +37,24 @@ public class DefaultVenueEvaluator : IVenueEvaluator
                 2);
         }
 
-        return candidates
+        var feasibleCandidates = candidates.Where(candidate => candidate.IsFeasible).ToList();
+        var selectionPool = feasibleCandidates.Count > 0 ? feasibleCandidates : candidates.ToList();
+        var paretoFront = BuildParetoFront(selectionPool);
+        var selected = SelectLabeledCandidates(paretoFront, topN);
+
+        foreach (var candidate in selectionPool
+                     .OrderByDescending(candidate => candidate.FinalScore))
+        {
+            if (selected.Count >= topN)
+                break;
+
+            if (selected.All(existing => existing.VenueId != candidate.VenueId))
+            {
+                selected.Add(candidate);
+            }
+        }
+
+        return selected
             .OrderByDescending(candidate => candidate.FinalScore)
             .Take(topN)
             .ToList();
@@ -49,5 +66,69 @@ public class DefaultVenueEvaluator : IVenueEvaluator
             return 0;
 
         return (value - min) / (max - min);
+    }
+
+    private static List<CandidateResultDto> BuildParetoFront(IReadOnlyList<CandidateResultDto> candidates) =>
+        candidates
+            .Where(candidate => !candidates.Any(other => other.VenueId != candidate.VenueId && Dominates(other, candidate)))
+            .OrderByDescending(candidate => candidate.FinalScore)
+            .ToList();
+
+    private static bool Dominates(CandidateResultDto a, CandidateResultDto b)
+    {
+        var notWorse =
+            a.Metrics.TotalGroupTimeSeconds <= b.Metrics.TotalGroupTimeSeconds &&
+            a.Metrics.MaxPassengerTimeSeconds <= b.Metrics.MaxPassengerTimeSeconds &&
+            a.Metrics.MaxDriverDetourSeconds <= b.Metrics.MaxDriverDetourSeconds &&
+            a.Metrics.TotalWalkingTimeSeconds <= b.Metrics.TotalWalkingTimeSeconds;
+        var strictlyBetter =
+            a.Metrics.TotalGroupTimeSeconds < b.Metrics.TotalGroupTimeSeconds ||
+            a.Metrics.MaxPassengerTimeSeconds < b.Metrics.MaxPassengerTimeSeconds ||
+            a.Metrics.MaxDriverDetourSeconds < b.Metrics.MaxDriverDetourSeconds ||
+            a.Metrics.TotalWalkingTimeSeconds < b.Metrics.TotalWalkingTimeSeconds;
+
+        return notWorse && strictlyBetter;
+    }
+
+    private static List<CandidateResultDto> SelectLabeledCandidates(
+        IReadOnlyList<CandidateResultDto> candidates,
+        int topN)
+    {
+        var selected = new List<CandidateResultDto>();
+        AddLabeledCandidate(
+            selected,
+            candidates.OrderBy(candidate => candidate.Metrics.TotalGroupTimeSeconds).FirstOrDefault(),
+            "Nhanh nhất",
+            "Tổng thời gian nhóm thấp nhất trong các phương án không bị dominate.");
+        AddLabeledCandidate(
+            selected,
+            candidates.OrderBy(candidate => candidate.Metrics.MaxPassengerTimeSeconds)
+                .ThenBy(candidate => candidate.Metrics.StdPassengerTimeSeconds)
+                .FirstOrDefault(),
+            "Công bằng nhất",
+            "Giảm thời gian passenger lâu nhất và độ lệch giữa các passenger.");
+        AddLabeledCandidate(
+            selected,
+            candidates.OrderBy(candidate => candidate.Metrics.MaxDriverDetourSeconds)
+                .ThenBy(candidate => candidate.Metrics.TotalDriverDetourSeconds)
+                .FirstOrDefault(),
+            "Nhẹ cho tài xế",
+            "Giữ detour của tài xế thấp nhất.");
+
+        return selected.Take(topN).ToList();
+    }
+
+    private static void AddLabeledCandidate(
+        ICollection<CandidateResultDto> selected,
+        CandidateResultDto? candidate,
+        string label,
+        string reason)
+    {
+        if (candidate == null || selected.Any(existing => existing.VenueId == candidate.VenueId))
+            return;
+
+        candidate.RecommendationType = label;
+        candidate.OptimizationReason = reason + " " + candidate.OptimizationReason;
+        selected.Add(candidate);
     }
 }

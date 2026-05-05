@@ -256,7 +256,9 @@ function MapViewComponent({
     const routeColors = ["#ff1e00", "#2b8a57", "#1d4ed8", "#7c3aed"];
     routePreview?.driverRoutes.forEach((route, routeIndex) => {
       const color = routeColors[routeIndex % routeColors.length];
-      const path = route.stops.map((stop) => ({ lat: stop.latitude, lng: stop.longitude }));
+      const path = route.routePolyline && route.routePolyline.length > 1
+        ? route.routePolyline.map((point) => ({ lat: point.latitude, lng: point.longitude }))
+        : route.stops.map((stop) => ({ lat: stop.latitude, lng: stop.longitude }));
 
       if (path.length > 1) {
         const polyline = new google.maps.Polyline({
@@ -304,6 +306,41 @@ function MapViewComponent({
 
         markersRef.current.set(`route-stop-${route.driverId}-${stop.sequence}`, stopMarker);
       });
+
+      route.stops
+        .filter((stop) => stop.stopType === "pickup_meetpoint" || stop.stopType === "pickup_merged")
+        .forEach((stop) => {
+          stop.passengerIds.forEach((passengerId) => {
+            const passenger = members.find((member) => member.id === passengerId);
+            if (!passenger || stop.walkingDistanceMeters <= 0) {
+              return;
+            }
+
+            const walkingLine = new google.maps.Polyline({
+              map,
+              path: [
+                { lat: passenger.latitude, lng: passenger.longitude },
+                { lat: stop.latitude, lng: stop.longitude },
+              ],
+              strokeColor: "#111827",
+              strokeOpacity: 0.45,
+              strokeWeight: 2,
+              geodesic: true,
+              icons: [
+                {
+                  icon: {
+                    path: "M 0,-1 0,1",
+                    strokeOpacity: 1,
+                    scale: 3,
+                  },
+                  offset: "0",
+                  repeat: "12px",
+                },
+              ],
+            });
+            polylinesRef.current.push(walkingLine);
+          });
+        });
     });
 
     // Add geometric median marker

@@ -3,6 +3,7 @@ import {
   TransportMode,
   MemberMobilityRole,
   OptimizationResult,
+  PickupSuggestion,
   VoteResponse,
 } from "@/types";
 
@@ -184,6 +185,17 @@ export const api = {
         },
       });
       await handleResponse<{ message: string }>(response);
+    },
+
+    getPickupSuggestions: async (sessionId: string): Promise<PickupSuggestion[]> => {
+      const normalizedSessionId = normalizeSessionId(sessionId);
+      const response = await fetch(`${API_BASE_URL}/api/sessions/${normalizedSessionId}/pickup-suggestions`, {
+        method: "GET",
+        headers: {
+          "Content-Type": "application/json",
+        },
+      });
+      return handleResponse<PickupSuggestion[]>(response);
     },
 
     lockDeparture: async (sessionId: string): Promise<void> => {

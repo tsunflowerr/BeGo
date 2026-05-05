@@ -1,11 +1,12 @@
 "use client";
 
 import { memo } from "react";
-import { Member, PickupRequest, PickupRequestStatus } from "@/types";
+import { Member, PickupRequest, PickupRequestStatus, PickupSuggestion, formatDistance, formatDuration } from "@/types";
 
 interface PickupRequestPanelProps {
   members: Member[];
   pickupRequests: PickupRequest[];
+  pickupSuggestions: PickupSuggestion[];
   currentMemberId?: string;
   onAccept: (requestId: string, driverId: string) => Promise<void>;
   onRelease: (requestId: string) => Promise<void>;
@@ -14,6 +15,7 @@ interface PickupRequestPanelProps {
 function PickupRequestPanelComponent({
   members,
   pickupRequests,
+  pickupSuggestions,
   currentMemberId,
   onAccept,
   onRelease,
@@ -45,6 +47,8 @@ function PickupRequestPanelComponent({
         {pickupRequests.map((request) => {
           const isAcceptedByCurrentDriver = request.acceptedDriverId === currentMemberId;
           const isPending = request.status === PickupRequestStatus.Pending;
+          const suggestions = pickupSuggestions.filter((suggestion) => suggestion.passengerId === request.passengerId);
+          const topSuggestion = suggestions[0];
 
           return (
             <div key={request.requestId} className="rounded-xl border border-[#e8f9fd] bg-[#f9fcff] p-3">
@@ -78,6 +82,39 @@ function PickupRequestPanelComponent({
                   </button>
                 )}
               </div>
+
+              {isPending && topSuggestion && (
+                <div className="mt-3 rounded-lg border border-[#d8f3ff] bg-white px-3 py-2">
+                  <p className="text-xs font-semibold text-[#1a1a2e]">
+                    Gợi ý: {topSuggestion.driverName} đón {request.passengerName}
+                  </p>
+                  <p className="mt-1 text-[11px] text-[#6b7280]">
+                    +{formatDuration(topSuggestion.estimatedDetourSeconds)} detour • cách khách {formatDistance(topSuggestion.distanceToPassengerMeters)} • còn {topSuggestion.remainingSeatCount} chỗ
+                  </p>
+                  {currentDriver?.id === topSuggestion.driverId && (
+                    <button
+                      type="button"
+                      onClick={() => void onAccept(request.requestId, topSuggestion.driverId)}
+                      className="mt-2 rounded-lg bg-[#1a1a2e] px-3 py-1.5 text-xs font-semibold text-white hover:bg-[#111827] transition-colors"
+                    >
+                      Nhận theo gợi ý
+                    </button>
+                  )}
+                </div>
+              )}
+
+              {isPending && suggestions.length > 1 && (
+                <div className="mt-2 flex flex-wrap gap-1.5">
+                  {suggestions.slice(1).map((suggestion) => (
+                    <span
+                      key={`${request.requestId}-${suggestion.driverId}`}
+                      className="rounded-full bg-[#e8f9fd] px-2 py-1 text-[10px] font-medium text-[#475569]"
+                    >
+                      {suggestion.driverName}: +{formatDuration(suggestion.estimatedDetourSeconds)}
+                    </span>
+                  ))}
+                </div>
+              )}
             </div>
           );
         })}

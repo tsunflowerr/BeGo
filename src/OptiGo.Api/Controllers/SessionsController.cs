@@ -84,6 +84,13 @@ public class SessionsController : ControllerBase
         return Ok(new { Message = "Pickup request released successfully" });
     }
 
+    [HttpGet("{id:guid}/pickup-suggestions")]
+    public async Task<IActionResult> GetPickupSuggestions(Guid id)
+    {
+        var suggestions = await _mediator.Send(new GetPickupSuggestionsQuery(id));
+        return Ok(suggestions);
+    }
+
     [HttpPost("{id:guid}/departure/lock")]
     public async Task<IActionResult> LockDeparture(Guid id)
     {

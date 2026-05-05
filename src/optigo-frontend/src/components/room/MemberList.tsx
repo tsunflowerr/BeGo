@@ -11,6 +11,8 @@ interface MemberListProps {
   winningVenueId?: string;
   showDistances?: boolean;
   memberDistances?: Map<string, { time: number; distance: number }>;
+  isSelectable?: boolean;
+  onMemberSelect?: (memberId: string) => void;
 }
 
 function MemberListComponent({
@@ -20,6 +22,8 @@ function MemberListComponent({
   winningVenueId,
   showDistances = false,
   memberDistances,
+  isSelectable = false,
+  onMemberSelect,
 }: MemberListProps) {
   // Sort members: host first, then by join time
   const sortedMembers = [...members].sort((a, b) => {
@@ -72,16 +76,22 @@ function MemberListComponent({
           const distanceInfo = memberDistances?.get(member.id);
           
           return (
-            <motion.div
+            <motion.button
               key={member.id}
+              type="button"
+              onClick={() => {
+                if (isSelectable) {
+                  onMemberSelect?.(member.id);
+                }
+              }}
               initial={{ opacity: 0, x: 20 }}
               animate={{ opacity: 1, x: 0 }}
               transition={{ delay: index * 0.05 }}
-              className={`flex items-center gap-3 p-3 rounded-xl transition-colors ${
+              className={`flex w-full items-center gap-3 p-3 rounded-xl text-left transition-colors ${
                 isCurrentUser 
                   ? "bg-[#ff1e00]/5 border border-[#ff1e00]/20" 
                   : "bg-[#e8f9fd]/50 hover:bg-[#e8f9fd]"
-              }`}
+              } ${isSelectable ? "cursor-pointer focus:outline-none focus:ring-2 focus:ring-[#ff1e00]/40" : "cursor-default"}`}
             >
               {/* Avatar */}
               <div className="relative flex-shrink-0">
@@ -150,7 +160,7 @@ function MemberListComponent({
                   </div>
                 )}
               </div>
-            </motion.div>
+            </motion.button>
           );
         })}
       </div>

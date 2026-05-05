@@ -74,6 +74,18 @@ export interface PickupRequest {
   updatedAt: string;
 }
 
+export interface PickupSuggestion {
+  passengerId: string;
+  passengerName: string;
+  driverId: string;
+  driverName: string;
+  estimatedDetourSeconds: number;
+  distanceToPassengerMeters: number;
+  remainingSeatCount: number;
+  scoreSeconds: number;
+  reason: string;
+}
+
 // Member route info for a venue
 export interface MemberRoute {
   memberId: string;
@@ -100,9 +112,15 @@ export interface RouteStop {
   cumulativeTimeSeconds: number;
   walkingDistanceMeters: number;
   waitSeconds: number;
+  serviceTimeSeconds: number;
   stopAccessType: string;
   isMergedStop: boolean;
   passengerIds: string[];
+}
+
+export interface RoutePoint {
+  latitude: number;
+  longitude: number;
 }
 
 export interface DriverRoute {
@@ -115,6 +133,7 @@ export interface DriverRoute {
   generalizedCostSeconds: number;
   passengerIds: string[];
   stops: RouteStop[];
+  routePolyline: RoutePoint[];
 }
 
 export interface RouteScoreBreakdown {
@@ -128,6 +147,18 @@ export interface RouteScoreBreakdown {
   riskPenaltySeconds: number;
   stabilityPenaltySeconds: number;
   venueQualityBonusSeconds: number;
+}
+
+export interface SolutionMetrics {
+  totalGroupTimeSeconds: number;
+  maxPassengerTimeSeconds: number;
+  stdPassengerTimeSeconds: number;
+  totalWalkingTimeSeconds: number;
+  maxWalkingTimeSeconds: number;
+  maxDriverDetourSeconds: number;
+  totalDriverDetourSeconds: number;
+  venueRating: number;
+  stopCount: number;
 }
 
 // Review from Google Places
@@ -153,6 +184,12 @@ export interface Venue {
   finalScore: number;
   maxDriverDetourSeconds: number;
   totalWalkingDistanceMeters: number;
+  isFeasible: boolean;
+  feasibilityIssues: string[];
+  recommendationType?: string;
+  optimizationReason?: string;
+  tradeOffSummary?: string;
+  metrics: SolutionMetrics;
   scoreBreakdown: RouteScoreBreakdown;
   memberRoutes: MemberRoute[];
   driverRoutes: DriverRoute[];

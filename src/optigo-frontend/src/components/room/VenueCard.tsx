@@ -118,6 +118,11 @@ function VenueCardComponent({
         <h3 className="font-semibold text-[#1a1a2e] text-lg mb-1 line-clamp-1">
           {venue.name}
         </h3>
+        {venue.recommendationType && (
+          <div className="mb-2 inline-flex rounded-full bg-[#ff1e00]/10 px-2.5 py-1 text-[11px] font-semibold text-[#ff1e00]">
+            {venue.recommendationType}
+          </div>
+        )}
 
         {/* Rating */}
         <div className="flex items-center gap-2 mb-2">
@@ -149,6 +154,12 @@ function VenueCardComponent({
           </svg>
           {venue.address}
         </p>
+
+        {venue.tradeOffSummary && (
+          <p className="mb-3 rounded-lg bg-[#f9fcff] p-2 text-xs text-[#475569]">
+            {venue.tradeOffSummary}
+          </p>
+        )}
 
         {/* Distance to user */}
         {myRoute && (
@@ -248,6 +259,18 @@ function VenueCardComponent({
                   </p>
                 </div>
               </div>
+
+              {venue.optimizationReason && (
+                <div className="mb-4 rounded-lg bg-[#f9fcff] p-3 text-sm text-[#475569]">
+                  {venue.optimizationReason}
+                </div>
+              )}
+
+              {!venue.isFeasible && venue.feasibilityIssues?.length > 0 && (
+                <div className="mb-4 rounded-lg bg-[#fff5d6] p-3 text-sm text-[#9a6700]">
+                  {venue.feasibilityIssues[0]}
+                </div>
+              )}
 
               {/* Reviews */}
               {venue.topReviews && venue.topReviews.length > 0 && (

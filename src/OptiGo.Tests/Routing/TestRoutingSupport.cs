@@ -60,7 +60,8 @@ internal sealed class FakeRouteCostProvider : IRouteCostProvider
         return Task.FromResult(new RouteResult
         {
             DistanceMeters = distance,
-            DurationSeconds = distance / GetSpeedMetersPerSecond(mode)
+            DurationSeconds = distance / GetSpeedMetersPerSecond(mode),
+            Geometry = [origin, destination]
         });
     }
 

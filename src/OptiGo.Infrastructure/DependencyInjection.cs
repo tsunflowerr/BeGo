@@ -48,6 +48,11 @@ public static class DependencyInjection
             client.Timeout = TimeSpan.FromSeconds(30);
         });
 
+        services.AddHttpClient<IMeetingPointProvider, OptiGo.Infrastructure.ExternalServices.Mapbox.MapboxMeetingPointProvider>(client =>
+        {
+            client.Timeout = TimeSpan.FromSeconds(12);
+        });
+
         services.AddSingleton<ITrafficSnapshotProvider, DefaultTrafficSnapshotProvider>();
         services.AddSingleton<IRouteCostProvider, CachedRouteCostProvider>();
         services.AddScoped<IVenuePrefilter, RouteAwareVenuePrefilter>();
