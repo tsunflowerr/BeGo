@@ -3,6 +3,7 @@ import {
   TransportMode,
   MemberMobilityRole,
   OptimizationResult,
+  OutingBenchmarkReport,
   PickupSuggestion,
   VoteResponse,
 } from "@/types";
@@ -245,6 +246,21 @@ export const api = {
     check: async (): Promise<{ status: string; timestamp: string; version: string }> => {
       const response = await fetch(`${API_BASE_URL}/api/health`);
       return handleResponse(response);
+    },
+  },
+
+  benchmarks: {
+    runOuting: async (seed: number, scenarioCount: number): Promise<OutingBenchmarkReport> => {
+      const url = new URL(`${API_BASE_URL}/api/benchmarks/outing`);
+      url.searchParams.set("seed", String(seed));
+      url.searchParams.set("scenarioCount", String(scenarioCount));
+      const response = await fetch(url.toString(), {
+        method: "GET",
+        headers: {
+          "Content-Type": "application/json",
+        },
+      });
+      return handleResponse<OutingBenchmarkReport>(response);
     },
   },
 };

@@ -12,8 +12,12 @@ public class DefaultVenueEvaluator : IVenueEvaluator
         if (candidates.Count == 0)
             return [];
 
-        var minCost = candidates.Min(candidate => candidate.ScoreBreakdown.GeneralizedCostSeconds);
-        var maxCost = candidates.Max(candidate => candidate.ScoreBreakdown.GeneralizedCostSeconds);
+        var compositeCosts = candidates.ToDictionary(
+            candidate => candidate.VenueId,
+            RoutingSolutionScorer.CalculateCompositeCost,
+            StringComparer.Ordinal);
+        var minCost = compositeCosts.Values.Min();
+        var maxCost = compositeCosts.Values.Max();
         var minFairness = candidates.Min(candidate => candidate.ScoreBreakdown.FairnessPenaltySeconds);
         var maxFairness = candidates.Max(candidate => candidate.ScoreBreakdown.FairnessPenaltySeconds);
         var minDetour = candidates.Min(candidate => candidate.MaxDriverDetourSeconds);
@@ -23,7 +27,7 @@ public class DefaultVenueEvaluator : IVenueEvaluator
 
         foreach (var candidate in candidates)
         {
-            var normalizedCost = Normalize(candidate.ScoreBreakdown.GeneralizedCostSeconds, minCost, maxCost);
+            var normalizedCost = Normalize(compositeCosts[candidate.VenueId], minCost, maxCost);
             var normalizedFairness = Normalize(candidate.ScoreBreakdown.FairnessPenaltySeconds, minFairness, maxFairness);
             var normalizedDetour = Normalize(candidate.MaxDriverDetourSeconds, minDetour, maxDetour);
             var normalizedWalk = Normalize(candidate.TotalWalkingDistanceMeters, minWalk, maxWalk);

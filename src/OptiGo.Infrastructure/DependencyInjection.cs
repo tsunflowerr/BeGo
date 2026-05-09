@@ -60,6 +60,7 @@ public static class DependencyInjection
         services.AddScoped<IDriverRouteOptimizer, SharedDestinationRouteOptimizer>();
         services.AddScoped<IVenueEvaluator, DefaultVenueEvaluator>();
         services.AddScoped<IOutingRoutePlanner, HybridOutingRoutePlanner>();
+        services.AddScoped<IOutingBenchmarkService, OutingBenchmarkService>();
 
         services.Configure<GroqOptions>(configuration.GetSection("Groq"));
         services.AddHttpClient<IAIService, GroqAIService>(client =>

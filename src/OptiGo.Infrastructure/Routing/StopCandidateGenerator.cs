@@ -279,8 +279,11 @@ public class StopCandidateGenerator : IStopCandidateGenerator
         foreach (var passenger in passengers)
         {
             var walkingMeters = passenger.GetLocation().DistanceTo(stopLocation);
-            if (!IsWalkFeasible(walkingMeters))
+            if (!IsWalkFeasible(walkingMeters) ||
+                walkingMeters / RoutingDefaults.WalkSpeedMetersPerSecond > RoutingDefaults.SharedStopTargetWalkSeconds)
+            {
                 return null;
+            }
 
             result[passenger.Id] = walkingMeters;
         }

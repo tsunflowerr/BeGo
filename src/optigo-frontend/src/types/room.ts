@@ -282,11 +282,11 @@ export interface SignalRError {
 
 // Transport mode helpers
 export const transportModeLabels: Record<TransportMode, string> = {
-  [TransportMode.Walking]: "Đi bộ",
-  [TransportMode.Cycling]: "Xe đạp",
-  [TransportMode.Motorbike]: "Xe máy",
-  [TransportMode.Car]: "Ô tô",
-  [TransportMode.Bus]: "Xe buýt",
+  [TransportMode.Walking]: "Walking",
+  [TransportMode.Cycling]: "Cycling",
+  [TransportMode.Motorbike]: "Motorbike",
+  [TransportMode.Car]: "Car",
+  [TransportMode.Bus]: "Bus",
 };
 
 export const transportModeIcons: Record<TransportMode, string> = {
@@ -298,25 +298,25 @@ export const transportModeIcons: Record<TransportMode, string> = {
 };
 
 export const mobilityRoleLabels: Record<MemberMobilityRole, string> = {
-  [MemberMobilityRole.SelfTravel]: "Tự di chuyển",
-  [MemberMobilityRole.NeedsPickup]: "Cần đón",
+  [MemberMobilityRole.SelfTravel]: "Self travel",
+  [MemberMobilityRole.NeedsPickup]: "Needs pickup",
 };
 
 // Helper to format time
 export function formatDuration(seconds: number): string {
   if (seconds < 60) {
-    return `${Math.round(seconds)} giây`;
+    return `${Math.round(seconds)} secs`;
   }
   const minutes = Math.floor(seconds / 60);
   if (minutes < 60) {
-    return `${minutes} phút`;
+    return `${minutes} mins`;
   }
   const hours = Math.floor(minutes / 60);
   const remainingMinutes = minutes % 60;
   if (remainingMinutes === 0) {
-    return `${hours} giờ`;
+    return `${hours} hrs`;
   }
-  return `${hours} giờ ${remainingMinutes} phút`;
+  return `${hours} hrs ${remainingMinutes} mins`;
 }
 
 // Helper to format distance

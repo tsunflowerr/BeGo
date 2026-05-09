@@ -46,12 +46,20 @@ public class SolutionMetricsDto
     public double TotalGroupTimeSeconds { get; set; }
     public double MaxPassengerTimeSeconds { get; set; }
     public double StdPassengerTimeSeconds { get; set; }
+    public double MaxMemberBurdenSeconds { get; set; }
+    public double WorstMemberRegretSeconds { get; set; }
+    public double PassengerBurdenGini { get; set; }
     public double TotalWalkingTimeSeconds { get; set; }
     public double MaxWalkingTimeSeconds { get; set; }
     public double MaxDriverDetourSeconds { get; set; }
+    public double StdDriverDetourSeconds { get; set; }
+    public double DriverDetourGini { get; set; }
     public double TotalDriverDetourSeconds { get; set; }
+    public double ArrivalSpreadSeconds { get; set; }
     public double VenueRating { get; set; }
     public int StopCount { get; set; }
+    public int SharedStopCount { get; set; }
+    public double SharedStopRate { get; set; }
 }
 public class ReviewDto
 {

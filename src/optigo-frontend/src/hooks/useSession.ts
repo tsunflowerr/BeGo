@@ -10,8 +10,6 @@ import {
   SessionStatus,
   OptimizationResult,
   Venue,
-  PickupRequestsUpdatedEvent,
-  DepartureLockedEvent,
   MemberJoinedEvent,
   OptimizationCompletedEvent,
   VoteSubmittedEvent,
@@ -168,11 +166,11 @@ export function useSession({ sessionId, memberId }: UseSessionOptions): UseSessi
     void refreshSession();
   }, [refreshSession]);
 
-  const handlePickupRequestsUpdated = useCallback((_event: PickupRequestsUpdatedEvent) => {
+  const handlePickupRequestsUpdated = useCallback(() => {
     void refreshSession();
   }, [refreshSession]);
 
-  const handleDepartureLocked = useCallback((_event: DepartureLockedEvent) => {
+  const handleDepartureLocked = useCallback(() => {
     void refreshSession();
   }, [refreshSession]);
 
@@ -227,7 +225,7 @@ export function useSession({ sessionId, memberId }: UseSessionOptions): UseSessi
   // Submit vote
   const submitVote = useCallback(async (venueId: string) => {
     if (!memberId) {
-      setError("Bạn cần tham gia phòng trước khi bình chọn");
+      setError("You need to join the room before voting");
       return;
     }
     
@@ -273,7 +271,7 @@ export function useSession({ sessionId, memberId }: UseSessionOptions): UseSessi
       await api.sessions.lockDeparture(sessionId);
       await refreshSession();
     } catch (err) {
-      setError(err instanceof Error ? err.message : "Không thể khóa chuyến đi");
+      setError(err instanceof Error ? err.message : "Cannot lock the trip");
     }
   }, [refreshSession, sessionId]);
 

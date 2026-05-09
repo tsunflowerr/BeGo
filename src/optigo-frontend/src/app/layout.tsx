@@ -13,8 +13,8 @@ const geistMono = Geist_Mono({
 });
 
 export const metadata: Metadata = {
-  title: "OptiGo - Nền tảng Tối ưu Di chuyển & Lập kế hoạch Nhóm",
-  description: "Real-time Group Mobility Optimization & Planning Platform with AI",
+  title: "BeGo - Group Outing Optimizer",
+  description: "Realtime outing coordination, pickup assignment, route preview, voting, and benchmark lab.",
 };
 
 export default function RootLayout({

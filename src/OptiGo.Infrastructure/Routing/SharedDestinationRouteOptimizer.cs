@@ -39,6 +39,7 @@ public class SharedDestinationRouteOptimizer : IDriverRouteOptimizer
                 .ToList());
 
         var coveringSolutions = BuildCoveringSolutions(input.Passengers.Select(passenger => passenger.Id).ToList(), optionsByPassenger);
+        AddDoorstepCoveringSolution(input, candidates, coveringSolutions);
         if (coveringSolutions.Count == 0)
         {
             coveringSolutions.Add(input.Passengers.Select(passenger => candidates.First(candidate =>
@@ -60,6 +61,31 @@ public class SharedDestinationRouteOptimizer : IDriverRouteOptimizer
         }
 
         return best ?? await BuildDirectDriverResultAsync(input, ct);
+    }
+
+    private static void AddDoorstepCoveringSolution(
+        DriverOptimizationInput input,
+        IReadOnlyList<StopCandidate> candidates,
+        List<List<StopCandidate>> coveringSolutions)
+    {
+        var doorstepStops = new List<StopCandidate>();
+        foreach (var passenger in input.Passengers)
+        {
+            var doorstep = candidates.FirstOrDefault(candidate =>
+                candidate.PassengerIds.Count == 1 &&
+                candidate.PassengerIds[0] == passenger.Id &&
+                candidate.StopAccessType == "doorstep");
+            if (doorstep == null)
+                return;
+
+            doorstepStops.Add(doorstep);
+        }
+
+        var key = BuildCoveringSolutionKey(doorstepStops);
+        if (coveringSolutions.Any(solution => BuildCoveringSolutionKey(solution) == key))
+            return;
+
+        coveringSolutions.Insert(0, doorstepStops);
     }
 
     private async Task<IReadOnlyList<StopCandidate>> FilterAndRankCandidatesAsync(
@@ -191,7 +217,7 @@ public class SharedDestinationRouteOptimizer : IDriverRouteOptimizer
 
         if (covered.Count == passengerIds.Count)
         {
-            var key = string.Join("|", chosen.Select(candidate => candidate.CandidateId).OrderBy(value => value, StringComparer.Ordinal));
+            var key = BuildCoveringSolutionKey(chosen);
             if (visitedKeys.Add(key))
             {
                 results.Add(chosen.ToList());
@@ -223,6 +249,9 @@ public class SharedDestinationRouteOptimizer : IDriverRouteOptimizer
             }
         }
     }
+
+    private static string BuildCoveringSolutionKey(IEnumerable<StopCandidate> chosen) =>
+        string.Join("|", chosen.Select(candidate => candidate.CandidateId).OrderBy(value => value, StringComparer.Ordinal));
 
     private async Task<List<StopCandidate>> OptimizeStopOrderingAsync(
         DriverOptimizationInput input,
@@ -458,7 +487,9 @@ public class SharedDestinationRouteOptimizer : IDriverRouteOptimizer
 
         var venueLeg = await GetRouteAsync(current, input.Venue.GetLocation(), input.Driver.TransportMode, input, ct);
         elapsedSeconds += venueLeg.DurationSeconds;
-        return elapsedSeconds + orderedStops.Count * RoutingDefaults.StopComplexityWeight;
+        return elapsedSeconds +
+               orderedStops.Count * RoutingDefaults.StopComplexityWeight -
+               CalculateSharedStopConvenienceBonus(orderedStops);
     }
 
     private async Task<TravelMatrixResult> BuildRouteMatrixAsync(
@@ -626,6 +657,7 @@ public class SharedDestinationRouteOptimizer : IDriverRouteOptimizer
         }
         var fairnessPenaltySeconds = ComputeFairnessPenalty(passengerRoutes);
         var stopComplexityPenaltySeconds = orderedStops.Count * RoutingDefaults.StopComplexityWeight;
+        var sharedStopConvenienceBonusSeconds = CalculateSharedStopConvenienceBonus(orderedStops);
         var generalizedCost =
             elapsedSeconds +
             walkSecondsTotal * RoutingDefaults.WalkWeight +
@@ -633,7 +665,8 @@ public class SharedDestinationRouteOptimizer : IDriverRouteOptimizer
             detourPenaltySeconds +
             fairnessPenaltySeconds +
             stopComplexityPenaltySeconds +
-            riskPenaltySeconds;
+            riskPenaltySeconds -
+            sharedStopConvenienceBonusSeconds;
 
         return new DriverOptimizationResult
         {
@@ -781,6 +814,14 @@ public class SharedDestinationRouteOptimizer : IDriverRouteOptimizer
     private static double GetServiceTimeSeconds(StopCandidate stop) =>
         RoutingDefaults.BasePickupServiceSeconds +
         stop.PassengerIds.Count * RoutingDefaults.BoardingServiceSecondsPerPassenger;
+
+    private static double CalculateSharedStopConvenienceBonus(IEnumerable<StopCandidate> stops) =>
+        stops
+            .Where(stop => stop.PassengerIds.Count > 1)
+            .Where(stop =>
+                stop.WalkingDistancesMeters.Count > 0 &&
+                stop.WalkingDistancesMeters.Values.Max() / RoutingDefaults.WalkSpeedMetersPerSecond <= RoutingDefaults.SharedStopTargetWalkSeconds)
+            .Sum(stop => Math.Max(0, stop.PassengerIds.Count - 1) * 110);
 
     private static double ScoreCandidateForPassenger(
         StopCandidate candidate,

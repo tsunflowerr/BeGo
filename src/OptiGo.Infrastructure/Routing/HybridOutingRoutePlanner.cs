@@ -7,6 +7,8 @@ namespace OptiGo.Infrastructure.Routing;
 public class HybridOutingRoutePlanner : IOutingRoutePlanner
 {
     private readonly IDriverRouteOptimizer _driverRouteOptimizer;
+    private readonly IDriverRouteOptimizer _doorstepRouteOptimizer;
+    private readonly bool _enableDoorstepFallback;
     private readonly IRouteCostProvider _routeCostProvider;
     private readonly ITrafficSnapshotProvider _trafficSnapshotProvider;
 
@@ -16,6 +18,12 @@ public class HybridOutingRoutePlanner : IOutingRoutePlanner
         ITrafficSnapshotProvider trafficSnapshotProvider)
     {
         _driverRouteOptimizer = driverRouteOptimizer;
+        _enableDoorstepFallback = driverRouteOptimizer is SharedDestinationRouteOptimizer;
+        _doorstepRouteOptimizer = _enableDoorstepFallback
+            ? new SharedDestinationRouteOptimizer(
+                new DoorstepOnlyStopCandidateGenerator(),
+                routeCostProvider)
+            : driverRouteOptimizer;
         _routeCostProvider = routeCostProvider;
         _trafficSnapshotProvider = trafficSnapshotProvider;
     }
@@ -38,11 +46,32 @@ public class HybridOutingRoutePlanner : IOutingRoutePlanner
 
         foreach (var assignmentSolution in assignmentSolutions.OrderBy(solution => solution.EstimatedCostSeconds))
         {
-            var candidate = await PlanVenueWithAssignmentsAsync(session, venue, trafficSnapshot, assignmentSolution, ct);
-            if (best == null ||
-                candidate.ScoreBreakdown.GeneralizedCostSeconds < best.ScoreBreakdown.GeneralizedCostSeconds)
+            var candidate = await PlanVenueWithAssignmentsAsync(
+                session,
+                venue,
+                trafficSnapshot,
+                assignmentSolution,
+                _driverRouteOptimizer,
+                ct);
+            if (IsBetterCandidate(candidate, best))
             {
                 best = candidate;
+            }
+
+            if (_enableDoorstepFallback &&
+                session.Members.Count <= RoutingDefaults.SmallGroupExactMemberLimit)
+            {
+                var doorstepCandidate = await PlanVenueWithAssignmentsAsync(
+                    session,
+                    venue,
+                    trafficSnapshot,
+                    assignmentSolution,
+                    _doorstepRouteOptimizer,
+                    ct);
+                if (IsBetterCandidate(doorstepCandidate, best))
+                {
+                    best = doorstepCandidate;
+                }
             }
         }
 
@@ -51,6 +80,7 @@ public class HybridOutingRoutePlanner : IOutingRoutePlanner
             venue,
             trafficSnapshot,
             PickupAssignmentSolution.Empty(session.Members.Where(member => member.CanOfferPickup())),
+            _driverRouteOptimizer,
             ct);
     }
 
@@ -59,6 +89,7 @@ public class HybridOutingRoutePlanner : IOutingRoutePlanner
         Venue venue,
         TrafficSnapshot trafficSnapshot,
         PickupAssignmentSolution assignmentSolution,
+        IDriverRouteOptimizer routeOptimizer,
         CancellationToken ct)
     {
         var optimizedRoutes = new List<DriverOptimizationResult>();
@@ -69,7 +100,7 @@ public class HybridOutingRoutePlanner : IOutingRoutePlanner
                 ? assignedPassengers
                 : [];
 
-            var optimized = await _driverRouteOptimizer.OptimizeAsync(
+            var optimized = await routeOptimizer.OptimizeAsync(
                 new DriverOptimizationInput
                 {
                     Driver = driver,
@@ -90,6 +121,49 @@ public class HybridOutingRoutePlanner : IOutingRoutePlanner
             optimizedRoutes,
             assignmentSolution.AssignedPassengerIds,
             ct);
+    }
+
+    private static bool IsBetterCandidate(CandidateResultDto candidate, CandidateResultDto? incumbent)
+    {
+        if (incumbent == null)
+            return true;
+
+        if (candidate.IsFeasible != incumbent.IsFeasible)
+            return candidate.IsFeasible;
+
+        var candidateCost = RoutingSolutionScorer.CalculateCompositeCost(candidate);
+        var incumbentCost = RoutingSolutionScorer.CalculateCompositeCost(incumbent);
+        if (candidateCost + 1e-6 < incumbentCost * 0.98)
+            return true;
+
+        if (candidateCost <= incumbentCost * 1.02)
+        {
+            if (candidate.Metrics.MaxMemberBurdenSeconds + 20 < incumbent.Metrics.MaxMemberBurdenSeconds)
+                return true;
+
+            if (candidate.Metrics.MaxPassengerTimeSeconds + 30 < incumbent.Metrics.MaxPassengerTimeSeconds)
+                return true;
+
+            if (candidate.Metrics.WorstMemberRegretSeconds + 20 < incumbent.Metrics.WorstMemberRegretSeconds)
+                return true;
+
+            if (candidate.Metrics.DriverDetourGini + 0.04 < incumbent.Metrics.DriverDetourGini)
+                return true;
+
+            if (candidate.Metrics.StdDriverDetourSeconds + 20 < incumbent.Metrics.StdDriverDetourSeconds)
+                return true;
+
+            if (candidate.Metrics.MaxDriverDetourSeconds + 30 < incumbent.Metrics.MaxDriverDetourSeconds)
+                return true;
+
+            if (candidate.Metrics.MaxWalkingTimeSeconds <= RoutingDefaults.MaxWalkSeconds &&
+                candidate.Metrics.SharedStopRate > incumbent.Metrics.SharedStopRate + 0.15)
+            {
+                return true;
+            }
+        }
+
+        return candidateCost + 1e-6 < incumbentCost;
     }
 
     private async Task<CandidateResultDto> BuildCandidateFromDriverResultsAsync(
@@ -151,14 +225,14 @@ public class HybridOutingRoutePlanner : IOutingRoutePlanner
             aggregateBreakdown.TotalDriveSeconds += directRoute.DurationSeconds;
         }
 
-        var qualityBonusSeconds = CalculateVenueQualityBonusSeconds(venue);
+        var qualityBonusSeconds = RoutingSolutionScorer.CalculateVenueQualityBonusSeconds(venue);
         aggregateBreakdown.VenueQualityBonusSeconds = qualityBonusSeconds;
         aggregateBreakdown.GeneralizedCostSeconds = Math.Max(0, aggregateBreakdown.GeneralizedCostSeconds - qualityBonusSeconds);
-        var metrics = BuildSolutionMetrics(venue, memberRoutes, driverRoutes);
-        var feasibilityIssues = ValidateSolution(session, memberRoutes, driverRoutes, metrics);
+        var metrics = RoutingSolutionScorer.BuildMetrics(venue, memberRoutes, driverRoutes);
+        var feasibilityIssues = RoutingSolutionScorer.ValidateSolution(session, memberRoutes, driverRoutes, metrics);
         if (feasibilityIssues.Count > 0)
         {
-            aggregateBreakdown.GeneralizedCostSeconds += feasibilityIssues.Count * 600;
+            aggregateBreakdown.GeneralizedCostSeconds += feasibilityIssues.Count * RoutingDefaults.FeasibilityIssuePenaltySeconds;
         }
 
         return new CandidateResultDto
@@ -308,7 +382,10 @@ public class HybridOutingRoutePlanner : IOutingRoutePlanner
         int maxCount)
     {
         var results = new List<List<Member>>();
-        ExploreSubsets(0, maxCount, passengers, new List<Member>(), results);
+        var limit = passengers.Count <= RoutingDefaults.SmallGroupExactMemberLimit
+            ? RoutingDefaults.MaxExactRoutePoolSubsetsPerDriver
+            : RoutingDefaults.MaxRoutePoolCandidatesPerDriver * 4;
+        ExploreSubsets(0, maxCount, passengers, new List<Member>(), results, limit);
         return results
             .OrderBy(subset => subset.Count)
             .ThenBy(subset => string.Join("|", subset.Select(passenger => passenger.Id)))
@@ -320,9 +397,10 @@ public class HybridOutingRoutePlanner : IOutingRoutePlanner
         int remaining,
         IReadOnlyList<Member> passengers,
         List<Member> current,
-        List<List<Member>> results)
+        List<List<Member>> results,
+        int limit)
     {
-        if (results.Count >= RoutingDefaults.MaxRoutePoolCandidatesPerDriver * 4)
+        if (results.Count >= limit)
             return;
 
         if (index >= passengers.Count || remaining == 0)
@@ -331,10 +409,10 @@ public class HybridOutingRoutePlanner : IOutingRoutePlanner
             return;
         }
 
-        ExploreSubsets(index + 1, remaining, passengers, current, results);
+        ExploreSubsets(index + 1, remaining, passengers, current, results, limit);
 
         current.Add(passengers[index]);
-        ExploreSubsets(index + 1, remaining - 1, passengers, current, results);
+        ExploreSubsets(index + 1, remaining - 1, passengers, current, results, limit);
         current.RemoveAt(current.Count - 1);
     }
 
@@ -517,11 +595,14 @@ public class HybridOutingRoutePlanner : IOutingRoutePlanner
             ct);
 
         var orderedPendingPassengers = pendingPassengers
-            .OrderBy(passenger => optionsByPassenger[passenger.Id].Count)
+            .OrderByDescending(passenger => ComputeAssignmentRegret(optionsByPassenger[passenger.Id]))
+            .ThenBy(passenger => optionsByPassenger[passenger.Id].First().ScoreSeconds)
             .ThenBy(passenger => passenger.JoinedAt)
             .ToList();
+        var suffixLowerBounds = BuildAssignmentSuffixLowerBounds(orderedPendingPassengers, optionsByPassenger);
 
         var results = new List<PickupAssignmentSolution>();
+        var exploredStates = 0;
         ExploreAssignments(
             0,
             orderedPendingPassengers,
@@ -530,7 +611,9 @@ public class HybridOutingRoutePlanner : IOutingRoutePlanner
             passengersByDriver,
             assignedPassengerIds,
             0,
-            results);
+            suffixLowerBounds,
+            results,
+            ref exploredStates);
 
         if (results.Count == 0)
         {
@@ -613,9 +696,12 @@ public class HybridOutingRoutePlanner : IOutingRoutePlanner
 
         foreach (var passenger in passengers)
         {
+            var optionLimit = passengers.Count + drivers.Count <= RoutingDefaults.SmallGroupExactMemberLimit
+                ? drivers.Count
+                : Math.Max(3, drivers.Count);
             optionsByPassenger[passenger.Id] = optionsByPassenger[passenger.Id]
                 .OrderBy(option => option.ScoreSeconds)
-                .Take(Math.Max(3, drivers.Count))
+                .Take(optionLimit)
                 .ToList();
 
             if (optionsByPassenger[passenger.Id].Count == 0)
@@ -627,6 +713,35 @@ public class HybridOutingRoutePlanner : IOutingRoutePlanner
         return optionsByPassenger;
     }
 
+    private static double ComputeAssignmentRegret(IReadOnlyList<AssignmentOption> options)
+    {
+        if (options.Count == 0)
+            return 0;
+
+        if (options.Count == 1)
+            return double.PositiveInfinity;
+
+        return options[1].ScoreSeconds - options[0].ScoreSeconds;
+    }
+
+    private static double[] BuildAssignmentSuffixLowerBounds(
+        IReadOnlyList<Member> orderedPendingPassengers,
+        IReadOnlyDictionary<Guid, List<AssignmentOption>> optionsByPassenger)
+    {
+        var suffix = new double[orderedPendingPassengers.Count + 1];
+        for (var index = orderedPendingPassengers.Count - 1; index >= 0; index--)
+        {
+            var passenger = orderedPendingPassengers[index];
+            var best = optionsByPassenger[passenger.Id]
+                .Select(option => option.ScoreSeconds)
+                .DefaultIfEmpty(0)
+                .Min();
+            suffix[index] = suffix[index + 1] + best;
+        }
+
+        return suffix;
+    }
+
     private static void ExploreAssignments(
         int passengerIndex,
         IReadOnlyList<Member> pendingPassengers,
@@ -635,15 +750,25 @@ public class HybridOutingRoutePlanner : IOutingRoutePlanner
         Dictionary<Guid, List<Member>> passengersByDriver,
         HashSet<Guid> assignedPassengerIds,
         double estimatedCostSeconds,
-        List<PickupAssignmentSolution> results)
+        IReadOnlyList<double> suffixLowerBounds,
+        List<PickupAssignmentSolution> results,
+        ref int exploredStates)
     {
-        if (results.Count >= RoutingDefaults.MaxAssignmentSolutions)
+        exploredStates++;
+        if (exploredStates > RoutingDefaults.MaxExactAssignmentStates)
             return;
+
+        var optimisticCost = estimatedCostSeconds + suffixLowerBounds[passengerIndex];
+        if (results.Count >= RoutingDefaults.MaxAssignmentSolutions &&
+            optimisticCost >= results[^1].EstimatedCostSeconds)
+        {
+            return;
+        }
 
         if (passengerIndex >= pendingPassengers.Count)
         {
             var imbalancePenaltySeconds = ComputeLoadImbalancePenalty(drivers, passengersByDriver);
-            results.Add(CreateAssignmentSolution(
+            AddBestAssignmentSolution(results, CreateAssignmentSolution(
                 passengersByDriver,
                 assignedPassengerIds,
                 estimatedCostSeconds + imbalancePenaltySeconds));
@@ -657,6 +782,16 @@ public class HybridOutingRoutePlanner : IOutingRoutePlanner
             if (driverPassengers.Count >= option.Driver.GetSeatCapacity())
                 continue;
 
+            var sharedClusterBonusSeconds = driverPassengers.Count(existingPassenger =>
+                existingPassenger.GetLocation().DistanceTo(passenger.GetLocation()) <= RoutingDefaults.SharedClusterRadiusMeters) * 140;
+            var dynamicLoadPenaltySeconds = driverPassengers.Count * 35 - sharedClusterBonusSeconds;
+            var nextCost = estimatedCostSeconds + option.ScoreSeconds + dynamicLoadPenaltySeconds;
+            if (results.Count >= RoutingDefaults.MaxAssignmentSolutions &&
+                nextCost + suffixLowerBounds[passengerIndex + 1] >= results[^1].EstimatedCostSeconds)
+            {
+                continue;
+            }
+
             driverPassengers.Add(passenger);
             assignedPassengerIds.Add(passenger.Id);
 
@@ -667,11 +802,33 @@ public class HybridOutingRoutePlanner : IOutingRoutePlanner
                 optionsByPassenger,
                 passengersByDriver,
                 assignedPassengerIds,
-                estimatedCostSeconds + option.ScoreSeconds,
-                results);
+                nextCost,
+                suffixLowerBounds,
+                results,
+                ref exploredStates);
 
             assignedPassengerIds.Remove(passenger.Id);
             driverPassengers.RemoveAt(driverPassengers.Count - 1);
+        }
+    }
+
+    private static void AddBestAssignmentSolution(
+        List<PickupAssignmentSolution> results,
+        PickupAssignmentSolution candidate)
+    {
+        var index = results.FindIndex(solution => candidate.EstimatedCostSeconds < solution.EstimatedCostSeconds);
+        if (index < 0)
+        {
+            results.Add(candidate);
+        }
+        else
+        {
+            results.Insert(index, candidate);
+        }
+
+        if (results.Count > RoutingDefaults.MaxAssignmentSolutions)
+        {
+            results.RemoveAt(results.Count - 1);
         }
     }
 
@@ -867,4 +1024,28 @@ public class HybridOutingRoutePlanner : IOutingRoutePlanner
         IReadOnlyList<RoutePoolCandidate> Candidates,
         IReadOnlySet<Guid> CoveredPassengerIds,
         double CostSeconds);
+
+    private sealed class DoorstepOnlyStopCandidateGenerator : IStopCandidateGenerator
+    {
+        public Task<IReadOnlyList<StopCandidate>> GenerateAsync(
+            DriverOptimizationInput input,
+            CancellationToken ct = default)
+        {
+            IReadOnlyList<StopCandidate> candidates = input.Passengers
+                .Select(passenger => new StopCandidate
+                {
+                    CandidateId = $"{passenger.Id}:doorstep-only",
+                    StopLocation = passenger.GetLocation(),
+                    Label = passenger.Name,
+                    StopAccessType = "doorstep",
+                    PassengerIds = [passenger.Id],
+                    WalkingDistancesMeters = new Dictionary<Guid, double> { [passenger.Id] = 0 },
+                    AccessPenaltySeconds = 0,
+                    RiskPenaltySeconds = 0
+                })
+                .ToList();
+
+            return Task.FromResult(candidates);
+        }
+    }
 }

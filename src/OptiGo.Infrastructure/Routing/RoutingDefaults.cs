@@ -5,6 +5,7 @@ internal static class RoutingDefaults
     public const double MaxWalkDistanceMeters = 500;
     public const double MaxWalkMinutes = 8;
     public const double MaxWalkSeconds = MaxWalkMinutes * 60;
+    public const double SharedStopTargetWalkSeconds = 5 * 60;
     public const double MaxPassengerTotalTravelSeconds = 35 * 60;
     public const double MaxDriverDetourSeconds = 15 * 60;
     public const double WalkSpeedMetersPerSecond = 1.25;
@@ -27,11 +28,15 @@ internal static class RoutingDefaults
     public const int MaxSharedStopsPerCluster = 5;
     public const int MaxDriverCorridorStops = 8;
     public const int MaxVenueCandidates = 15;
-    public const int MaxAssignmentSolutions = 32;
+    public const int SmallGroupExactMemberLimit = 10;
+    public const int MaxAssignmentSolutions = 64;
+    public const int MaxExactAssignmentStates = 200_000;
     public const int MaxRoutePoolCandidatesPerDriver = 50;
+    public const int MaxExactRoutePoolSubsetsPerDriver = 1_024;
     public const int MaxRoutePoolSolutions = 64;
     public const int MaxRefinementIterations = 200;
     public const int ExactRouteStopLimit = 9;
+    public const double FeasibilityIssuePenaltySeconds = 600;
     public const double StopDeduplicationMeters = 20;
     public const double SharedClusterRadiusMeters = 500;
     public const double DriverCorridorMeters = 300;
