@@ -10,6 +10,9 @@ namespace OptiGo.Infrastructure.Routing;
 
 public class OutingBenchmarkService : IOutingBenchmarkService
 {
+    private const double FairnessCostGuardRatio = 1.08;
+    private const double FairnessCostGuardSlackSeconds = 90;
+
     private static readonly string[] Layouts =
     [
         "clustered",
@@ -46,6 +49,7 @@ public class OutingBenchmarkService : IOutingBenchmarkService
             foreach (var run in runs)
             {
                 run.ScenarioId = scenario.ScenarioId;
+                run.IsScenarioServiceable = IsServiceable(scenario);
             }
 
             ApplyExternalGaps(runs);
@@ -318,23 +322,29 @@ public class OutingBenchmarkService : IOutingBenchmarkService
     {
         var feasible = candidates.Where(candidate => candidate.IsFeasible).ToList();
         var pool = feasible.Count > 0 ? feasible : candidates.ToList();
-        var bestCost = pool.Min(RoutingSolutionScorer.CalculateCompositeCost);
-        var nearBest = pool
-            .Where(candidate => RoutingSolutionScorer.CalculateCompositeCost(candidate) <= bestCost * 1.03 + 1)
+        var bestCompositeCost = pool.Min(RoutingSolutionScorer.CalculateCompositeCost);
+        var compositePool = pool
+            .Where(candidate => RoutingSolutionScorer.CalculateCompositeCost(candidate) <= bestCompositeCost * 1.03 + 1)
+            .ToList();
+        var bestPureCost = compositePool.Min(RoutingSolutionScorer.CalculatePureCost);
+        var costGuard = bestPureCost * FairnessCostGuardRatio + FairnessCostGuardSlackSeconds;
+        var boundedCostPool = compositePool
+            .Where(candidate => RoutingSolutionScorer.CalculatePureCost(candidate) <= costGuard)
             .ToList();
 
-        return nearBest
+        return boundedCostPool
             .OrderBy(candidate => candidate.Metrics.MaxMemberBurdenSeconds)
-            .ThenBy(candidate => candidate.Metrics.MaxPassengerTimeSeconds)
             .ThenBy(candidate => candidate.Metrics.WorstMemberRegretSeconds)
+            .ThenBy(candidate => candidate.Metrics.MaxPassengerTimeSeconds)
+            .ThenBy(candidate => candidate.Metrics.PassengerBurdenGini)
             .ThenBy(candidate => candidate.Metrics.DriverDetourGini)
             .ThenBy(candidate => candidate.Metrics.StdDriverDetourSeconds)
             .ThenBy(candidate => candidate.Metrics.MaxDriverDetourSeconds)
             .ThenByDescending(candidate => candidate.Metrics.MaxWalkingTimeSeconds <= RoutingDefaults.MaxWalkSeconds
                 ? candidate.Metrics.SharedStopRate
                 : 0)
-            .ThenBy(candidate => candidate.Metrics.TotalGroupTimeSeconds)
-            .ThenBy(RoutingSolutionScorer.CalculateCompositeCost)
+            .ThenBy(RoutingSolutionScorer.CalculateFairnessScore)
+            .ThenBy(RoutingSolutionScorer.CalculatePureCost)
             .First();
     }
 
@@ -807,6 +817,8 @@ public class OutingBenchmarkService : IOutingBenchmarkService
             IsFeasible = candidate.IsFeasible,
             FeasibilityIssues = candidate.FeasibilityIssues,
             ObjectiveSeconds = RoutingSolutionScorer.CalculateCompositeCost(candidate),
+            PureCostSeconds = RoutingSolutionScorer.CalculatePureCost(candidate),
+            FairnessScoreSeconds = RoutingSolutionScorer.CalculateFairnessScore(candidate),
             TotalGroupTimeSeconds = candidate.Metrics.TotalGroupTimeSeconds,
             MaxPassengerTimeSeconds = candidate.Metrics.MaxPassengerTimeSeconds,
             StdPassengerTimeSeconds = candidate.Metrics.StdPassengerTimeSeconds,
@@ -831,21 +843,38 @@ public class OutingBenchmarkService : IOutingBenchmarkService
             .Where(run => !run.IsOptiGo && run.IsFeasible)
             .OrderBy(run => run.ObjectiveSeconds)
             .FirstOrDefault();
-        if (bestExternal == null)
-            return;
+        var bestCostExternal = runs
+            .Where(run => !run.IsOptiGo && run.IsFeasible)
+            .OrderBy(run => run.PureCostSeconds)
+            .FirstOrDefault();
 
         foreach (var run in runs)
         {
-            run.GapToBestExternalPercent = bestExternal.ObjectiveSeconds <= 0
-                ? 0
-                : (run.ObjectiveSeconds - bestExternal.ObjectiveSeconds) / bestExternal.ObjectiveSeconds * 100;
+            if (bestExternal != null)
+            {
+                run.GapToBestExternalPercent = bestExternal.ObjectiveSeconds <= 0
+                    ? 0
+                    : (run.ObjectiveSeconds - bestExternal.ObjectiveSeconds) / bestExternal.ObjectiveSeconds * 100;
+            }
+
+            if (bestCostExternal != null)
+            {
+                run.CostGapToBestExternalPercent = bestCostExternal.PureCostSeconds <= 0
+                    ? 0
+                    : (run.PureCostSeconds - bestCostExternal.PureCostSeconds) / bestCostExternal.PureCostSeconds * 100;
+                run.FairnessGainVsBestCostExternalPercent = bestCostExternal.FairnessScoreSeconds <= 0
+                    ? 0
+                    : (bestCostExternal.FairnessScoreSeconds - run.FairnessScoreSeconds) / bestCostExternal.FairnessScoreSeconds * 100;
+            }
         }
     }
 
     private static BenchmarkScenarioResultDto ToScenarioResult(
         BenchmarkScenario scenario,
-        List<BenchmarkAlgorithmRunDto> runs) =>
-        new()
+        List<BenchmarkAlgorithmRunDto> runs)
+    {
+        var serviceability = GetServiceability(scenario);
+        return new BenchmarkScenarioResultDto
         {
             ScenarioId = scenario.ScenarioId,
             Layout = scenario.Layout,
@@ -853,6 +882,8 @@ public class OutingBenchmarkService : IOutingBenchmarkService
             DriverCount = scenario.Session.Members.Count(member => member.CanOfferPickup()),
             PickupPassengerCount = scenario.Session.Members.Count(member => member.NeedsPickup()),
             VenueCount = scenario.Venues.Count,
+            IsServiceable = serviceability.IsServiceable,
+            UnserviceableReason = serviceability.Reason,
             Description = scenario.Description,
             Members = scenario.Session.Members.Select(member => new BenchmarkMemberDto
             {
@@ -873,6 +904,25 @@ public class OutingBenchmarkService : IOutingBenchmarkService
             }).ToList(),
             Runs = runs
         };
+    }
+
+    private static bool IsServiceable(BenchmarkScenario scenario) =>
+        GetServiceability(scenario).IsServiceable;
+
+    private static (bool IsServiceable, string? Reason) GetServiceability(BenchmarkScenario scenario)
+    {
+        var totalSeats = scenario.Session.Members
+            .Where(member => member.CanOfferPickup())
+            .Sum(member => member.GetSeatCapacity());
+        var pickupPassengers = scenario.Session.Members.Count(member => member.NeedsPickup());
+
+        if (totalSeats < pickupPassengers)
+        {
+            return (false, $"Không đủ ghế: {totalSeats} ghế cho {pickupPassengers} passenger cần pickup.");
+        }
+
+        return (true, null);
+    }
 
     private static List<BenchmarkAlgorithmAggregateDto> BuildAggregates(
         IReadOnlyList<BenchmarkAlgorithmRunDto> runs)
@@ -891,6 +941,7 @@ public class OutingBenchmarkService : IOutingBenchmarkService
             .Select(group =>
             {
                 var groupRuns = group.ToList();
+                var serviceableRuns = groupRuns.Where(run => run.IsScenarioServiceable).ToList();
                 var wins = groupRuns.Count(run =>
                     bestByScenario.TryGetValue(run.ScenarioId, out var best) &&
                     IsTiedWithBest(run, best));
@@ -901,9 +952,17 @@ public class OutingBenchmarkService : IOutingBenchmarkService
                     AlgorithmName = group.Key.AlgorithmName,
                     IsOptiGo = group.Key.IsOptiGo,
                     Runs = groupRuns.Count,
+                    ServiceableRuns = serviceableRuns.Count,
                     FeasibleRate = groupRuns.Count == 0 ? 0 : groupRuns.Count(run => run.IsFeasible) / (double)groupRuns.Count,
+                    ServiceableFeasibleRate = serviceableRuns.Count == 0
+                        ? 0
+                        : serviceableRuns.Count(run => run.IsFeasible) / (double)serviceableRuns.Count,
                     WinRate = groupRuns.Count == 0 ? 0 : wins / (double)groupRuns.Count,
                     AverageObjectiveSeconds = groupRuns.Average(run => run.ObjectiveSeconds),
+                    AveragePureCostSeconds = groupRuns.Average(run => run.PureCostSeconds),
+                    AverageFairnessScoreSeconds = groupRuns.Average(run => run.FairnessScoreSeconds),
+                    AverageCostGapToBestExternalPercent = groupRuns.Average(run => run.CostGapToBestExternalPercent),
+                    AverageFairnessGainVsBestCostExternalPercent = groupRuns.Average(run => run.FairnessGainVsBestCostExternalPercent),
                     AverageTotalGroupTimeSeconds = groupRuns.Average(run => run.TotalGroupTimeSeconds),
                     AverageMaxPassengerTimeSeconds = groupRuns.Average(run => run.MaxPassengerTimeSeconds),
                     AverageMaxMemberBurdenSeconds = groupRuns.Average(run => run.MaxMemberBurdenSeconds),

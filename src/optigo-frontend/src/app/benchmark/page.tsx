@@ -113,10 +113,10 @@ export default function BenchmarkPage() {
 
         {report && optigoAggregate && (
           <section className="grid gap-4 md:grid-cols-4">
+            <Kpi label="Cost gap" value={signedGapPercent(optigoAggregate.averageCostGapToBestExternalPercent)} tone="bg-[#f7c948]" />
+            <Kpi label="Fairness gain" value={signedGapPercent(optigoAggregate.averageFairnessGainVsBestCostExternalPercent)} tone="bg-[#45d483]" />
             <Kpi label="Worst burden" value={metricSeconds(optiGoOrZero(optigoAggregate.averageMaxMemberBurdenSeconds))} tone="bg-[#f472b6]" />
-            <Kpi label="Worst regret" value={metricSeconds(optiGoOrZero(optigoAggregate.averageWorstMemberRegretSeconds))} tone="bg-[#f7c948]" />
             <Kpi label="Driver Gini" value={optigoAggregate.averageDriverDetourGini.toFixed(2)} tone="bg-[#48c7df]" />
-            <Kpi label="Shared stop" value={formatMetricPercent(optigoAggregate.averageSharedStopRate)} tone="bg-[#45d483]" />
           </section>
         )}
 
@@ -170,10 +170,10 @@ function AggregateTable({ report }: { report: OutingBenchmarkReport }) {
         <h2 className="text-xl font-black">Algorithm aggregate</h2>
       </div>
       <div className="bego-scrollbar overflow-x-auto">
-        <table className="w-full min-w-[1100px] text-left text-sm">
+        <table className="w-full min-w-[1320px] text-left text-sm">
           <thead className="bg-[#fff7dc] text-xs uppercase">
             <tr>
-              {["Algorithm", "Feasible", "Win", "Objective", "Passenger", "Burden", "Regret", "Detour", "Gini", "Stops", "Shared", "Runtime"].map((head) => (
+              {["Algorithm", "Feasible", "Svc feasible", "Win", "Objective", "Pure cost", "Cost gap", "Fair score", "Fair gain", "Passenger", "Burden", "Regret", "Detour", "Gini", "Stops", "Shared", "Runtime"].map((head) => (
                 <th key={head} className="border-b-2 border-[#172033] px-4 py-3 font-black">{head}</th>
               ))}
             </tr>
@@ -186,8 +186,13 @@ function AggregateTable({ report }: { report: OutingBenchmarkReport }) {
                   {aggregate.isOptiGo && <span className="ml-2 rounded-full bg-[#ff3b1f] px-2 py-1 text-[10px] font-black text-white">OptiGo</span>}
                 </td>
                 <td className="px-4 py-3">{formatMetricPercent(aggregate.feasibleRate)}</td>
+                <td className="px-4 py-3">{formatMetricPercent(aggregate.serviceableFeasibleRate)}</td>
                 <td className="px-4 py-3">{formatMetricPercent(aggregate.winRate)}</td>
                 <td className="px-4 py-3">{metricSeconds(aggregate.averageObjectiveSeconds)}</td>
+                <td className="px-4 py-3">{metricSeconds(aggregate.averagePureCostSeconds)}</td>
+                <td className="px-4 py-3">{signedGapPercent(aggregate.averageCostGapToBestExternalPercent)}</td>
+                <td className="px-4 py-3">{metricSeconds(aggregate.averageFairnessScoreSeconds)}</td>
+                <td className="px-4 py-3">{signedGapPercent(aggregate.averageFairnessGainVsBestCostExternalPercent)}</td>
                 <td className="px-4 py-3">{metricSeconds(aggregate.averageMaxPassengerTimeSeconds)}</td>
                 <td className="px-4 py-3">{metricSeconds(aggregate.averageMaxMemberBurdenSeconds)}</td>
                 <td className="px-4 py-3">{metricSeconds(aggregate.averageWorstMemberRegretSeconds)}</td>
@@ -258,12 +263,13 @@ function ScenarioList({
               <div className="flex items-center justify-between gap-2">
                 <span className="font-black">{scenario.scenarioId}</span>
                 {weakScenarioIds.has(scenario.scenarioId) && <span className="bego-chip min-h-7 bg-[#f7c948]">weak</span>}
+                {!scenario.isServiceable && <span className="bego-chip min-h-7 bg-[#f472b6]">capacity</span>}
               </div>
               <p className="mt-1 text-xs font-black uppercase text-[#64748b]">{scenario.layout}</p>
               <p className="mt-1 text-sm font-bold text-[#475569]">
                 {scenario.memberCount} members - {scenario.pickupPassengerCount} pickup - {scenario.driverCount} drivers
               </p>
-              {optigo && <p className="mt-1 text-xs font-bold text-[#64748b]">OptiGo gap {signedGapPercent(optigo.gapToBestExternalPercent)}</p>}
+              {optigo && <p className="mt-1 text-xs font-bold text-[#64748b]">Cost {signedGapPercent(optigo.costGapToBestExternalPercent)} - Fair {signedGapPercent(optigo.fairnessGainVsBestCostExternalPercent)}</p>}
             </button>
           );
         })}
@@ -279,18 +285,20 @@ function ScenarioDetail({ scenario, sources }: { scenario: BenchmarkScenarioResu
         <div className="flex flex-col gap-3 md:flex-row md:items-start md:justify-between">
           <div>
             <span className="bego-chip bg-[#48c7df]">{scenario.layout}</span>
+            {!scenario.isServiceable && <span className="ml-2 bego-chip bg-[#f472b6]">unserviceable</span>}
             <h2 className="mt-3 text-2xl font-black">{scenario.scenarioId}</h2>
             <p className="mt-1 font-semibold text-[#64748b]">{scenario.description}</p>
+            {scenario.unserviceableReason && <p className="mt-1 text-sm font-bold text-[#b42318]">{scenario.unserviceableReason}</p>}
           </div>
           <span className="bego-chip bg-[#f7c948]">{scenario.venueCount} venues</span>
         </div>
       </div>
 
       <div className="bego-scrollbar overflow-x-auto">
-        <table className="w-full min-w-[1160px] text-left text-sm">
+        <table className="w-full min-w-[1420px] text-left text-sm">
           <thead className="bg-[#fff7dc] text-xs uppercase">
             <tr>
-              {["Algorithm", "Venue", "Feasible", "Gap", "Objective", "Group", "Passenger", "Burden", "Regret", "Detour", "Gini", "Stops", "Shared", "Walk", "Runtime"].map((head) => (
+              {["Algorithm", "Venue", "Feasible", "Obj gap", "Cost gap", "Fair gain", "Objective", "Pure cost", "Fair score", "Group", "Passenger", "Burden", "Regret", "Detour", "Gini", "Stops", "Shared", "Walk", "Runtime"].map((head) => (
                 <th key={head} className="border-b-2 border-[#172033] px-4 py-3 font-black">{head}</th>
               ))}
             </tr>
@@ -308,7 +316,11 @@ function ScenarioDetail({ scenario, sources }: { scenario: BenchmarkScenarioResu
                   <td className="px-4 py-3">{run.selectedVenueName}</td>
                   <td className="px-4 py-3">{run.isFeasible ? "yes" : "no"}</td>
                   <td className="px-4 py-3">{signedGapPercent(run.gapToBestExternalPercent)}</td>
+                  <td className="px-4 py-3">{signedGapPercent(run.costGapToBestExternalPercent)}</td>
+                  <td className="px-4 py-3">{signedGapPercent(run.fairnessGainVsBestCostExternalPercent)}</td>
                   <td className="px-4 py-3">{metricSeconds(run.objectiveSeconds)}</td>
+                  <td className="px-4 py-3">{metricSeconds(run.pureCostSeconds)}</td>
+                  <td className="px-4 py-3">{metricSeconds(run.fairnessScoreSeconds)}</td>
                   <td className="px-4 py-3">{metricSeconds(run.totalGroupTimeSeconds)}</td>
                   <td className="px-4 py-3">{metricSeconds(run.maxPassengerTimeSeconds)}</td>
                   <td className="px-4 py-3">{metricSeconds(run.maxMemberBurdenSeconds)}</td>

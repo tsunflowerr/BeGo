@@ -47,6 +47,31 @@ internal static class RoutingSolutionScorer
         return Math.Max(0, score - candidate.ScoreBreakdown.VenueQualityBonusSeconds * 0.35);
     }
 
+    public static double CalculatePureCost(CandidateResultDto candidate) =>
+        CalculateTotalCostBaseline(candidate);
+
+    public static double CalculateFairnessScore(CandidateResultDto candidate)
+    {
+        var metrics = candidate.Metrics;
+        var score =
+            0.30 * metrics.MaxMemberBurdenSeconds +
+            0.22 * metrics.WorstMemberRegretSeconds +
+            0.18 * metrics.MaxPassengerTimeSeconds +
+            0.12 * metrics.MaxDriverDetourSeconds +
+            0.08 * metrics.StdDriverDetourSeconds +
+            0.05 * metrics.TotalWalkingTimeSeconds +
+            metrics.DriverDetourGini * 180 +
+            metrics.PassengerBurdenGini * 160 -
+            metrics.SharedStopRate * 90;
+
+        if (!candidate.IsFeasible)
+        {
+            score += candidate.FeasibilityIssues.Count * RoutingDefaults.FeasibilityIssuePenaltySeconds;
+        }
+
+        return Math.Max(0, score);
+    }
+
     public static SolutionMetricsDto BuildMetrics(
         Venue venue,
         IReadOnlyList<MemberRouteDto> memberRoutes,

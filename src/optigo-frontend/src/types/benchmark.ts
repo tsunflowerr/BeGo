@@ -9,9 +9,15 @@ export interface BenchmarkAlgorithmAggregate {
   algorithmName: string;
   isOptiGo: boolean;
   runs: number;
+  serviceableRuns: number;
   feasibleRate: number;
+  serviceableFeasibleRate: number;
   winRate: number;
   averageObjectiveSeconds: number;
+  averagePureCostSeconds: number;
+  averageFairnessScoreSeconds: number;
+  averageCostGapToBestExternalPercent: number;
+  averageFairnessGainVsBestCostExternalPercent: number;
   averageTotalGroupTimeSeconds: number;
   averageMaxPassengerTimeSeconds: number;
   averageMaxMemberBurdenSeconds: number;
@@ -50,9 +56,12 @@ export interface BenchmarkAlgorithmRun {
   isOptiGo: boolean;
   selectedVenueId: string;
   selectedVenueName: string;
+  isScenarioServiceable: boolean;
   isFeasible: boolean;
   feasibilityIssues: string[];
   objectiveSeconds: number;
+  pureCostSeconds: number;
+  fairnessScoreSeconds: number;
   totalGroupTimeSeconds: number;
   maxPassengerTimeSeconds: number;
   stdPassengerTimeSeconds: number;
@@ -70,6 +79,8 @@ export interface BenchmarkAlgorithmRun {
   sharedStopCount: number;
   computeTimeMs: number;
   gapToBestExternalPercent: number;
+  costGapToBestExternalPercent: number;
+  fairnessGainVsBestCostExternalPercent: number;
 }
 
 export interface BenchmarkScenarioResult {
@@ -79,6 +90,8 @@ export interface BenchmarkScenarioResult {
   driverCount: number;
   pickupPassengerCount: number;
   venueCount: number;
+  isServiceable: boolean;
+  unserviceableReason?: string | null;
   description: string;
   members: BenchmarkMember[];
   venues: BenchmarkVenue[];

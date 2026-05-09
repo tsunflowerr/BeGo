@@ -60,9 +60,15 @@ public class BenchmarkAlgorithmAggregateDto
     public string AlgorithmName { get; init; } = string.Empty;
     public bool IsOptiGo { get; init; }
     public int Runs { get; init; }
+    public int ServiceableRuns { get; init; }
     public double FeasibleRate { get; init; }
+    public double ServiceableFeasibleRate { get; init; }
     public double WinRate { get; init; }
     public double AverageObjectiveSeconds { get; init; }
+    public double AveragePureCostSeconds { get; init; }
+    public double AverageFairnessScoreSeconds { get; init; }
+    public double AverageCostGapToBestExternalPercent { get; init; }
+    public double AverageFairnessGainVsBestCostExternalPercent { get; init; }
     public double AverageTotalGroupTimeSeconds { get; init; }
     public double AverageMaxPassengerTimeSeconds { get; init; }
     public double AverageMaxMemberBurdenSeconds { get; init; }
@@ -85,6 +91,8 @@ public class BenchmarkScenarioResultDto
     public int DriverCount { get; init; }
     public int PickupPassengerCount { get; init; }
     public int VenueCount { get; init; }
+    public bool IsServiceable { get; init; }
+    public string? UnserviceableReason { get; init; }
     public string Description { get; init; } = string.Empty;
     public List<BenchmarkMemberDto> Members { get; init; } = new();
     public List<BenchmarkVenueDto> Venues { get; init; } = new();
@@ -118,9 +126,12 @@ public class BenchmarkAlgorithmRunDto
     public bool IsOptiGo { get; init; }
     public string SelectedVenueId { get; init; } = string.Empty;
     public string SelectedVenueName { get; init; } = string.Empty;
+    public bool IsScenarioServiceable { get; set; }
     public bool IsFeasible { get; init; }
     public List<string> FeasibilityIssues { get; init; } = new();
     public double ObjectiveSeconds { get; init; }
+    public double PureCostSeconds { get; init; }
+    public double FairnessScoreSeconds { get; init; }
     public double TotalGroupTimeSeconds { get; init; }
     public double MaxPassengerTimeSeconds { get; init; }
     public double StdPassengerTimeSeconds { get; init; }
@@ -138,6 +149,8 @@ public class BenchmarkAlgorithmRunDto
     public int SharedStopCount { get; init; }
     public double ComputeTimeMs { get; init; }
     public double GapToBestExternalPercent { get; set; }
+    public double CostGapToBestExternalPercent { get; set; }
+    public double FairnessGainVsBestCostExternalPercent { get; set; }
 }
 
 public class BenchmarkWeaknessDto

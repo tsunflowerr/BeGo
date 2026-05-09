@@ -16,10 +16,14 @@ public class DefaultVenueEvaluator : IVenueEvaluator
             candidate => candidate.VenueId,
             RoutingSolutionScorer.CalculateCompositeCost,
             StringComparer.Ordinal);
+        var fairnessScores = candidates.ToDictionary(
+            candidate => candidate.VenueId,
+            RoutingSolutionScorer.CalculateFairnessScore,
+            StringComparer.Ordinal);
         var minCost = compositeCosts.Values.Min();
         var maxCost = compositeCosts.Values.Max();
-        var minFairness = candidates.Min(candidate => candidate.ScoreBreakdown.FairnessPenaltySeconds);
-        var maxFairness = candidates.Max(candidate => candidate.ScoreBreakdown.FairnessPenaltySeconds);
+        var minFairness = fairnessScores.Values.Min();
+        var maxFairness = fairnessScores.Values.Max();
         var minDetour = candidates.Min(candidate => candidate.MaxDriverDetourSeconds);
         var maxDetour = candidates.Max(candidate => candidate.MaxDriverDetourSeconds);
         var minWalk = candidates.Min(candidate => candidate.TotalWalkingDistanceMeters);
@@ -28,15 +32,15 @@ public class DefaultVenueEvaluator : IVenueEvaluator
         foreach (var candidate in candidates)
         {
             var normalizedCost = Normalize(compositeCosts[candidate.VenueId], minCost, maxCost);
-            var normalizedFairness = Normalize(candidate.ScoreBreakdown.FairnessPenaltySeconds, minFairness, maxFairness);
+            var normalizedFairness = Normalize(fairnessScores[candidate.VenueId], minFairness, maxFairness);
             var normalizedDetour = Normalize(candidate.MaxDriverDetourSeconds, minDetour, maxDetour);
             var normalizedWalk = Normalize(candidate.TotalWalkingDistanceMeters, minWalk, maxWalk);
 
             candidate.FinalScore = Math.Round(
                 100 -
-                normalizedCost * 58 -
-                normalizedFairness * 16 -
-                normalizedDetour * 14 -
+                normalizedCost * 38 -
+                normalizedFairness * 32 -
+                normalizedDetour * 18 -
                 normalizedWalk * 12,
                 2);
         }
@@ -83,11 +87,15 @@ public class DefaultVenueEvaluator : IVenueEvaluator
         var notWorse =
             a.Metrics.TotalGroupTimeSeconds <= b.Metrics.TotalGroupTimeSeconds &&
             a.Metrics.MaxPassengerTimeSeconds <= b.Metrics.MaxPassengerTimeSeconds &&
+            a.Metrics.MaxMemberBurdenSeconds <= b.Metrics.MaxMemberBurdenSeconds &&
+            a.Metrics.WorstMemberRegretSeconds <= b.Metrics.WorstMemberRegretSeconds &&
             a.Metrics.MaxDriverDetourSeconds <= b.Metrics.MaxDriverDetourSeconds &&
             a.Metrics.TotalWalkingTimeSeconds <= b.Metrics.TotalWalkingTimeSeconds;
         var strictlyBetter =
             a.Metrics.TotalGroupTimeSeconds < b.Metrics.TotalGroupTimeSeconds ||
             a.Metrics.MaxPassengerTimeSeconds < b.Metrics.MaxPassengerTimeSeconds ||
+            a.Metrics.MaxMemberBurdenSeconds < b.Metrics.MaxMemberBurdenSeconds ||
+            a.Metrics.WorstMemberRegretSeconds < b.Metrics.WorstMemberRegretSeconds ||
             a.Metrics.MaxDriverDetourSeconds < b.Metrics.MaxDriverDetourSeconds ||
             a.Metrics.TotalWalkingTimeSeconds < b.Metrics.TotalWalkingTimeSeconds;
 
@@ -106,11 +114,13 @@ public class DefaultVenueEvaluator : IVenueEvaluator
             "Tổng thời gian nhóm thấp nhất trong các phương án không bị dominate.");
         AddLabeledCandidate(
             selected,
-            candidates.OrderBy(candidate => candidate.Metrics.MaxPassengerTimeSeconds)
+            candidates.OrderBy(candidate => candidate.Metrics.MaxMemberBurdenSeconds)
+                .ThenBy(candidate => candidate.Metrics.WorstMemberRegretSeconds)
+                .ThenBy(candidate => candidate.Metrics.MaxPassengerTimeSeconds)
                 .ThenBy(candidate => candidate.Metrics.StdPassengerTimeSeconds)
                 .FirstOrDefault(),
             "Công bằng nhất",
-            "Giảm thời gian passenger lâu nhất và độ lệch giữa các passenger.");
+            "Giảm burden người tệ nhất, regret và độ lệch giữa các passenger.");
         AddLabeledCandidate(
             selected,
             candidates.OrderBy(candidate => candidate.Metrics.MaxDriverDetourSeconds)
