@@ -6,7 +6,9 @@ import {
   OutingBenchmarkReport,
   PickupSuggestion,
   VoteResponse,
+  ChatMessage,
 } from "@/types";
+import { getSession } from "next-auth/react";
 
 const API_BASE_URL = process.env.NEXT_PUBLIC_API_URL || "http://localhost:5096";
 
@@ -107,6 +109,7 @@ async function handleResponse<T>(response: Response): Promise<T> {
     const errorData = await response.json().catch(() => null);
     throw new ApiError(
       errorData?.message ||
+        errorData?.error?.message ||
         errorData?.error ||
         errorData?.Error ||
         (Array.isArray(errorData?.Details) ? errorData.Details.join(", ") : undefined) ||
@@ -118,14 +121,25 @@ async function handleResponse<T>(response: Response): Promise<T> {
   return response.json();
 }
 
+async function authHeaders(): Promise<HeadersInit> {
+  const session = await getSession();
+  const idToken = (session as (typeof session & { idToken?: string }) | null)?.idToken;
+  if (!idToken) {
+    throw new ApiError("Phiên đăng nhập Google chưa có ID token. Hãy sign out rồi sign in lại.", 401, session);
+  }
+
+  return {
+    "Content-Type": "application/json",
+    Authorization: `Bearer ${idToken}`,
+  };
+}
+
 export const api = {
   sessions: {
     create: async (data: CreateSessionRequest): Promise<CreateSessionResponse> => {
       const response = await fetch(`${API_BASE_URL}/api/sessions`, {
         method: "POST",
-        headers: {
-          "Content-Type": "application/json",
-        },
+        headers: await authHeaders(),
         body: JSON.stringify(data),
       });
       return normalizeCreateSessionResponse(await handleResponse<unknown>(response));
@@ -135,9 +149,7 @@ export const api = {
       const normalizedSessionId = normalizeSessionId(sessionId);
       const response = await fetch(`${API_BASE_URL}/api/sessions/${normalizedSessionId}`, {
         method: "GET",
-        headers: {
-          "Content-Type": "application/json",
-        },
+        headers: await authHeaders(),
       });
       
       return handleResponse<Session>(response);
@@ -147,9 +159,7 @@ export const api = {
       const normalizedSessionId = normalizeSessionId(sessionId);
       const response = await fetch(`${API_BASE_URL}/api/sessions/${normalizedSessionId}/members`, {
         method: "POST",
-        headers: {
-          "Content-Type": "application/json",
-        },
+        headers: await authHeaders(),
         body: JSON.stringify(data),
       });
       return handleResponse<JoinSessionResponse>(response);
@@ -159,9 +169,7 @@ export const api = {
       const normalizedSessionId = normalizeSessionId(sessionId);
       const response = await fetch(`${API_BASE_URL}/api/sessions/${normalizedSessionId}/query`, {
         method: "PUT",
-        headers: {
-          "Content-Type": "application/json",
-        },
+        headers: await authHeaders(),
         body: JSON.stringify({ queryText }),
       });
       await handleResponse<{ message: string }>(response);
@@ -171,9 +179,7 @@ export const api = {
       const normalizedSessionId = normalizeSessionId(sessionId);
       const response = await fetch(`${API_BASE_URL}/api/sessions/${normalizedSessionId}/pickup-requests/${requestId}/accept`, {
         method: "POST",
-        headers: {
-          "Content-Type": "application/json",
-        },
+        headers: await authHeaders(),
         body: JSON.stringify({ driverId }),
       });
       await handleResponse<{ message: string }>(response);
@@ -183,9 +189,7 @@ export const api = {
       const normalizedSessionId = normalizeSessionId(sessionId);
       const response = await fetch(`${API_BASE_URL}/api/sessions/${normalizedSessionId}/pickup-requests/${requestId}/release`, {
         method: "POST",
-        headers: {
-          "Content-Type": "application/json",
-        },
+        headers: await authHeaders(),
       });
       await handleResponse<{ message: string }>(response);
     },
@@ -194,9 +198,7 @@ export const api = {
       const normalizedSessionId = normalizeSessionId(sessionId);
       const response = await fetch(`${API_BASE_URL}/api/sessions/${normalizedSessionId}/pickup-suggestions`, {
         method: "GET",
-        headers: {
-          "Content-Type": "application/json",
-        },
+        headers: await authHeaders(),
       });
       return handleResponse<PickupSuggestion[]>(response);
     },
@@ -205,9 +207,7 @@ export const api = {
       const normalizedSessionId = normalizeSessionId(sessionId);
       const response = await fetch(`${API_BASE_URL}/api/sessions/${normalizedSessionId}/departure/lock`, {
         method: "POST",
-        headers: {
-          "Content-Type": "application/json",
-        },
+        headers: await authHeaders(),
       });
       await handleResponse<{ message: string }>(response);
     },
@@ -222,9 +222,7 @@ export const api = {
       }
       const response = await fetch(url.toString(), {
         method: "POST",
-        headers: {
-          "Content-Type": "application/json",
-        },
+        headers: await authHeaders(),
       });
       return handleResponse<OptimizationResult>(response);
     },
@@ -235,9 +233,7 @@ export const api = {
       const normalizedSessionId = normalizeSessionId(sessionId);
       const response = await fetch(`${API_BASE_URL}/api/vote/${normalizedSessionId}`, {
         method: "POST",
-        headers: {
-          "Content-Type": "application/json",
-        },
+        headers: await authHeaders(),
         body: JSON.stringify({ memberId, venueId }),
       });
       return handleResponse<VoteResponse>(response);
@@ -258,11 +254,32 @@ export const api = {
       url.searchParams.set("scenarioCount", String(scenarioCount));
       const response = await fetch(url.toString(), {
         method: "GET",
-        headers: {
-          "Content-Type": "application/json",
-        },
+        headers: await authHeaders(),
       });
       return handleResponse<OutingBenchmarkReport>(response);
+    },
+  },
+
+  chat: {
+    list: async (sessionId: string, take = 50): Promise<ChatMessage[]> => {
+      const normalizedSessionId = normalizeSessionId(sessionId);
+      const url = new URL(`${API_BASE_URL}/api/sessions/${normalizedSessionId}/chat`);
+      url.searchParams.set("take", String(take));
+      const response = await fetch(url.toString(), {
+        method: "GET",
+        headers: await authHeaders(),
+      });
+      return handleResponse<ChatMessage[]>(response);
+    },
+
+    send: async (sessionId: string, memberId: string, text: string): Promise<ChatMessage> => {
+      const normalizedSessionId = normalizeSessionId(sessionId);
+      const response = await fetch(`${API_BASE_URL}/api/sessions/${normalizedSessionId}/chat`, {
+        method: "POST",
+        headers: await authHeaders(),
+        body: JSON.stringify({ memberId, text }),
+      });
+      return handleResponse<ChatMessage>(response);
     },
   },
 };

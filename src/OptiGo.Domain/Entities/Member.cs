@@ -12,6 +12,8 @@ public class Member
     public double Latitude { get; private set; }
     public double Longitude { get; private set; }
     public string? AvatarUrl { get; private set; }
+    public string? AuthSubject { get; private set; }
+    public string? AuthEmail { get; private set; }
     public TransportMode TransportMode { get; private set; }
     public MemberMobilityRole MobilityRole { get; private set; }
     public Guid? DriverId { get; private set; }
@@ -26,7 +28,9 @@ public class Member
         Coordinate location,
         TransportMode transportMode = TransportMode.Motorbike,
         MemberMobilityRole mobilityRole = MemberMobilityRole.SelfTravel,
-        string? avatarUrl = null)
+        string? avatarUrl = null,
+        string? authSubject = null,
+        string? authEmail = null)
     {
         Id = Guid.NewGuid();
         SessionId = sessionId;
@@ -34,10 +38,22 @@ public class Member
         Latitude = location.Latitude;
         Longitude = location.Longitude;
         AvatarUrl = string.IsNullOrWhiteSpace(avatarUrl) ? null : avatarUrl.Trim();
+        AuthSubject = string.IsNullOrWhiteSpace(authSubject) ? null : authSubject.Trim();
+        AuthEmail = string.IsNullOrWhiteSpace(authEmail) ? null : authEmail.Trim();
         TransportMode = transportMode;
         MobilityRole = mobilityRole;
         JoinedAt = DateTime.UtcNow;
     }
+
+    public void SetAuthIdentity(string authSubject, string? authEmail)
+    {
+        AuthSubject = string.IsNullOrWhiteSpace(authSubject) ? throw new ArgumentException("Auth subject is required.", nameof(authSubject)) : authSubject.Trim();
+        AuthEmail = string.IsNullOrWhiteSpace(authEmail) ? null : authEmail.Trim();
+    }
+
+    public bool IsOwnedBy(string authSubject) =>
+        !string.IsNullOrWhiteSpace(AuthSubject) &&
+        string.Equals(AuthSubject, authSubject, StringComparison.Ordinal);
 
     public Coordinate GetLocation()
     {

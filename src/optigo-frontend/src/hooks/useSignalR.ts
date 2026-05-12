@@ -2,6 +2,7 @@
 
 import { useState, useEffect, useCallback, useRef } from "react";
 import * as signalR from "@microsoft/signalr";
+import { getSession } from "next-auth/react";
 import { API_BASE_URL } from "@/lib/api";
 import {
   MemberJoinedEvent,
@@ -12,6 +13,7 @@ import {
   VotingCompletedEvent,
   PickupRequestsUpdatedEvent,
   DepartureLockedEvent,
+  ChatMessageSentEvent,
   SignalRError,
 } from "@/types";
 
@@ -19,6 +21,7 @@ type ConnectionState = "disconnected" | "connecting" | "connected" | "reconnecti
 
 interface UseSignalROptions {
   sessionId: string;
+  enabled?: boolean;
   onMemberJoined?: (event: MemberJoinedEvent) => void;
   onMemberLeft?: (event: MemberLeftEvent) => void;
   onComputingStarted?: (event: ComputingStartedEvent) => void;
@@ -27,11 +30,13 @@ interface UseSignalROptions {
   onVotingCompleted?: (event: VotingCompletedEvent) => void;
   onPickupRequestsUpdated?: (event: PickupRequestsUpdatedEvent) => void;
   onDepartureLocked?: (event: DepartureLockedEvent) => void;
+  onChatMessageSent?: (event: ChatMessageSentEvent) => void;
   onError?: (error: SignalRError) => void;
 }
 
 export function useSignalR({
   sessionId,
+  enabled = true,
   onMemberJoined,
   onMemberLeft,
   onComputingStarted,
@@ -40,6 +45,7 @@ export function useSignalR({
   onVotingCompleted,
   onPickupRequestsUpdated,
   onDepartureLocked,
+  onChatMessageSent,
   onError,
 }: UseSignalROptions) {
   const [connectionState, setConnectionState] = useState<ConnectionState>("disconnected");
@@ -47,6 +53,10 @@ export function useSignalR({
   const mountedRef = useRef(true);
 
   const connect = useCallback(async () => {
+    if (!enabled) {
+      return;
+    }
+
     if (connectionRef.current?.state === signalR.HubConnectionState.Connected) {
       return;
     }
@@ -56,6 +66,10 @@ export function useSignalR({
     const connection = new signalR.HubConnectionBuilder()
       .withUrl(`${API_BASE_URL}/hubs/session`, {
         withCredentials: true,
+        accessTokenFactory: async () => {
+          const session = await getSession();
+          return (session as (typeof session & { idToken?: string }) | null)?.idToken ?? "";
+        },
       })
       .withAutomaticReconnect([0, 2000, 5000, 10000, 30000])
       .configureLogging(signalR.LogLevel.Information)
@@ -110,6 +124,12 @@ export function useSignalR({
       }
     });
 
+    connection.on("ChatMessageSent", (event: ChatMessageSentEvent) => {
+      if (mountedRef.current && onChatMessageSent) {
+        onChatMessageSent(event);
+      }
+    });
+
     connection.on("Error", (error: SignalRError) => {
       if (mountedRef.current && onError) {
         onError(error);
@@ -155,7 +175,7 @@ export function useSignalR({
         setConnectionState("disconnected");
       }
     }
-  }, [sessionId, onMemberJoined, onMemberLeft, onComputingStarted, onOptimizationCompleted, onVoteSubmitted, onVotingCompleted, onPickupRequestsUpdated, onDepartureLocked, onError]);
+  }, [enabled, sessionId, onMemberJoined, onMemberLeft, onComputingStarted, onOptimizationCompleted, onVoteSubmitted, onVotingCompleted, onPickupRequestsUpdated, onDepartureLocked, onChatMessageSent, onError]);
 
   const notifyMemberLeft = useCallback(async (payload: {
     memberId: string;

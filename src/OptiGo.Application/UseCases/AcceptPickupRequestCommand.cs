@@ -11,15 +11,18 @@ public class AcceptPickupRequestHandler : IRequestHandler<AcceptPickupRequestCom
     private readonly ISessionRepository _sessionRepository;
     private readonly IUnitOfWork _unitOfWork;
     private readonly ISessionNotifier _notifier;
+    private readonly ICurrentUser _currentUser;
 
     public AcceptPickupRequestHandler(
         ISessionRepository sessionRepository,
         IUnitOfWork unitOfWork,
-        ISessionNotifier notifier)
+        ISessionNotifier notifier,
+        ICurrentUser currentUser)
     {
         _sessionRepository = sessionRepository;
         _unitOfWork = unitOfWork;
         _notifier = notifier;
+        _currentUser = currentUser;
     }
 
     public async Task<Unit> Handle(AcceptPickupRequestCommand request, CancellationToken cancellationToken)
@@ -27,6 +30,8 @@ public class AcceptPickupRequestHandler : IRequestHandler<AcceptPickupRequestCom
         var session = await _sessionRepository.GetByIdWithDetailsAsync(request.SessionId, cancellationToken);
         if (session == null)
             throw new DomainException($"Session {request.SessionId} not found.");
+
+        SessionAuthorization.RequireMemberOwnerOrHost(session, request.DriverId, _currentUser);
 
         session.AcceptPickupRequest(request.PickupRequestId, request.DriverId);
 

@@ -8,7 +8,10 @@ public interface ISessionRepository
 
     Task<Session?> GetByIdWithDetailsAsync(Guid id, CancellationToken ct = default);
 
+    Task<IReadOnlyList<Session>> GetExpiredAsync(DateTime utcNow, int take, CancellationToken ct = default);
+
     Task AddAsync(Session session, CancellationToken ct = default);
     Task UpdateAsync(Session session, CancellationToken ct = default);
+    Task RemoveRangeAsync(IEnumerable<Session> sessions, CancellationToken ct = default);
     Task<bool> ExistsAsync(Guid id, CancellationToken ct = default);
 }

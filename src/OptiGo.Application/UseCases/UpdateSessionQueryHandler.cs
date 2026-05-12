@@ -8,19 +8,23 @@ public class UpdateSessionQueryHandler : IRequestHandler<UpdateSessionQueryComma
 {
     private readonly ISessionRepository _sessionRepository;
     private readonly IUnitOfWork _unitOfWork;
+    private readonly ICurrentUser _currentUser;
 
-    public UpdateSessionQueryHandler(ISessionRepository sessionRepository, IUnitOfWork unitOfWork)
+    public UpdateSessionQueryHandler(ISessionRepository sessionRepository, IUnitOfWork unitOfWork, ICurrentUser currentUser)
     {
         _sessionRepository = sessionRepository;
         _unitOfWork = unitOfWork;
+        _currentUser = currentUser;
     }
 
     public async Task<Unit> Handle(UpdateSessionQueryCommand request, CancellationToken cancellationToken)
     {
-        var session = await _sessionRepository.GetByIdAsync(request.SessionId, cancellationToken);
+        var session = await _sessionRepository.GetByIdWithDetailsAsync(request.SessionId, cancellationToken);
 
         if (session == null)
             throw new DomainException($"Session {request.SessionId} not found.");
+
+        SessionAuthorization.RequireHost(session, _currentUser);
 
         if (session.Status != Domain.Enums.SessionStatus.WaitingForMembers)
             throw new DomainException("Cannot update query after computation has started.");

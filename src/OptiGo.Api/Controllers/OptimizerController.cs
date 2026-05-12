@@ -1,5 +1,6 @@
 using MediatR;
 using Microsoft.AspNetCore.Mvc;
+using Microsoft.AspNetCore.RateLimiting;
 using OptiGo.Application.UseCases;
 
 namespace OptiGo.Api.Controllers;
@@ -16,6 +17,7 @@ public class OptimizerController : ControllerBase
     }
 
     [HttpPost("session/{id:guid}/optimize")]
+    [EnableRateLimiting("expensive")]
     public async Task<IActionResult> FindMeetPoint(Guid id, [FromQuery] string category = "cafe")
     {
         var command = new FindMeetPointCommand(id, category);

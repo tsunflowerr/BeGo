@@ -16,12 +16,14 @@ import {
   VoteSubmittedEvent,
   VotingCompletedEvent,
   Vote,
+  ChatMessage,
 } from "@/types";
 import { useSignalR } from "./useSignalR";
 
 interface UseSessionOptions {
   sessionId: string;
   memberId?: string | null;
+  enabled?: boolean;
 }
 
 interface UseSessionReturn {
@@ -55,18 +57,20 @@ interface UseSessionReturn {
   // Connection
   isConnected: boolean;
   memberLeaveNotice: MemberLeftEvent | null;
+  chatMessages: ChatMessage[];
   
   // Actions
   notifyMemberLeft: (payload: { memberId: string; memberName: string; isHost: boolean }) => Promise<void>;
   refreshSession: () => Promise<void>;
   startOptimization: (query?: string) => Promise<void>;
-  submitVote: (venueId: string) => Promise<void>;
+  submitVote: (venueId: string, voterMemberId?: string) => Promise<void>;
   acceptPickupRequest: (requestId: string, driverId: string) => Promise<void>;
   releasePickupRequest: (requestId: string) => Promise<void>;
   lockDeparture: () => Promise<void>;
+  sendChatMessage: (text: string) => Promise<void>;
 }
 
-export function useSession({ sessionId, memberId }: UseSessionOptions): UseSessionReturn {
+export function useSession({ sessionId, memberId, enabled = true }: UseSessionOptions): UseSessionReturn {
   const [session, setSession] = useState<Session | null>(null);
   const [members, setMembers] = useState<Member[]>([]);
   const [pickupRequests, setPickupRequests] = useState<PickupRequest[]>([]);
@@ -80,6 +84,7 @@ export function useSession({ sessionId, memberId }: UseSessionOptions): UseSessi
   const [error, setError] = useState<string | null>(null);
   const [isComputing, setIsComputing] = useState(false);
   const [memberLeaveNotice, setMemberLeaveNotice] = useState<MemberLeftEvent | null>(null);
+  const [chatMessages, setChatMessages] = useState<ChatMessage[]>([]);
   
   const loadedRef = useRef(false);
 
@@ -96,8 +101,23 @@ export function useSession({ sessionId, memberId }: UseSessionOptions): UseSessi
     });
   }, []);
 
+  const appendChatMessage = useCallback((message: ChatMessage) => {
+    setChatMessages((prev) => {
+      if (prev.some((existing) => existing.id === message.id)) {
+        return prev;
+      }
+
+      return [...prev, message].slice(-100);
+    });
+  }, []);
+
   // Fetch session data
   const refreshSession = useCallback(async () => {
+    if (!enabled) {
+      setLoading(false);
+      return;
+    }
+
     try {
       setError(null);
       const data = await api.sessions.get(sessionId);
@@ -105,18 +125,21 @@ export function useSession({ sessionId, memberId }: UseSessionOptions): UseSessi
       setMembers(data.members || []);
       setPickupRequests(data.pickupRequests || []);
       const hasPendingPickup = (data.pickupRequests || []).some((request) => request.status === "Pending");
-      setPickupSuggestions(hasPendingPickup ? await api.sessions.getPickupSuggestions(sessionId) : []);
+      setPickupSuggestions(memberId && hasPendingPickup ? await api.sessions.getPickupSuggestions(sessionId) : []);
       setOptimizationResult(data.latestOptimizationResult || null);
       setWinningVenueId(data.winningVenueId || null);
       setFinalRoutePreview(data.finalRoutePreview || null);
       setVotingProgress({ total: data.members?.length || 0, voted: data.votes?.length || 0 });
       setHasVoted(!!memberId && (data.votes || []).some((vote) => vote.memberId === memberId));
+      if (memberId) {
+        setChatMessages(await api.chat.list(sessionId, 50));
+      }
     } catch (err) {
       setError(err instanceof Error ? err.message : "Không thể tải thông tin phòng");
     } finally {
       setLoading(false);
     }
-  }, [memberId, sessionId]);
+  }, [enabled, memberId, sessionId]);
 
   // SignalR event handlers
   const handleMemberJoined = useCallback((event: MemberJoinedEvent) => {
@@ -187,6 +210,10 @@ export function useSession({ sessionId, memberId }: UseSessionOptions): UseSessi
     void refreshSession();
   }, [refreshSession]);
 
+  const handleChatMessageSent = useCallback((event: ChatMessage) => {
+    appendChatMessage(event);
+  }, [appendChatMessage]);
+
   const handleError = useCallback((error: { code: string; message: string }) => {
     setError(error.message);
   }, []);
@@ -194,6 +221,7 @@ export function useSession({ sessionId, memberId }: UseSessionOptions): UseSessi
   // SignalR connection
   const { isConnected, notifyMemberLeft } = useSignalR({
     sessionId,
+    enabled: !!memberId,
     onMemberJoined: handleMemberJoined,
     onMemberLeft: handleMemberLeft,
     onComputingStarted: handleComputingStarted,
@@ -202,20 +230,50 @@ export function useSession({ sessionId, memberId }: UseSessionOptions): UseSessi
     onVotingCompleted: handleVotingCompleted,
     onPickupRequestsUpdated: handlePickupRequestsUpdated,
     onDepartureLocked: handleDepartureLocked,
+    onChatMessageSent: handleChatMessageSent,
     onError: handleError,
   });
 
   // Initial load
   useEffect(() => {
+    if (!enabled) {
+      setLoading(false);
+      return;
+    }
+
     if (!loadedRef.current) {
       loadedRef.current = true;
       refreshSession();
     }
-  }, [refreshSession]);
+  }, [enabled, refreshSession]);
 
   useEffect(() => {
     setHasVoted(!!memberId && (session?.votes || []).some((vote) => vote.memberId === memberId));
   }, [memberId, session?.votes]);
+
+  useEffect(() => {
+    if (!enabled || !memberId) {
+      setChatMessages([]);
+      return;
+    }
+
+    let cancelled = false;
+    api.chat.list(sessionId, 50)
+      .then((messages) => {
+        if (!cancelled) {
+          setChatMessages(messages);
+        }
+      })
+      .catch(() => {
+        if (!cancelled) {
+          setChatMessages([]);
+        }
+      });
+
+    return () => {
+      cancelled = true;
+    };
+  }, [enabled, memberId, sessionId]);
 
   // Start optimization
   const startOptimization = useCallback(async (query?: string) => {
@@ -237,17 +295,20 @@ export function useSession({ sessionId, memberId }: UseSessionOptions): UseSessi
   }, [sessionId, members.length]);
 
   // Submit vote
-  const submitVote = useCallback(async (venueId: string) => {
-    if (!memberId) {
+  const submitVote = useCallback(async (venueId: string, voterMemberId?: string) => {
+    const effectiveMemberId = voterMemberId ?? memberId;
+    if (!effectiveMemberId) {
       setError("You need to join the room before voting");
       return;
     }
     
     try {
       setError(null);
-      const response = await api.vote.submit(sessionId, memberId, venueId);
-      appendVote({ memberId, venueId });
-      setHasVoted(true);
+      const response = await api.vote.submit(sessionId, effectiveMemberId, venueId);
+      appendVote({ memberId: effectiveMemberId, venueId });
+      if (effectiveMemberId === memberId) {
+        setHasVoted(true);
+      }
       
       if (response.isVotingCompleted && response.winningVenueId) {
         setWinningVenueId(response.winningVenueId);
@@ -289,6 +350,21 @@ export function useSession({ sessionId, memberId }: UseSessionOptions): UseSessi
     }
   }, [refreshSession, sessionId]);
 
+  const sendChatMessage = useCallback(async (text: string) => {
+    if (!memberId) {
+      setError("You need to join the room before chatting");
+      return;
+    }
+
+    try {
+      setError(null);
+      const message = await api.chat.send(sessionId, memberId, text);
+      appendChatMessage(message);
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Cannot send message");
+    }
+  }, [appendChatMessage, memberId, sessionId]);
+
   // Derived state
   const currentMember = members.find((m) => m.id === memberId) || null;
   const isHost = session?.members?.[0]?.id === memberId || members[0]?.id === memberId;
@@ -320,6 +396,7 @@ export function useSession({ sessionId, memberId }: UseSessionOptions): UseSessi
     isCompleted,
     isConnected,
     memberLeaveNotice,
+    chatMessages,
     notifyMemberLeft,
     refreshSession,
     startOptimization,
@@ -327,5 +404,6 @@ export function useSession({ sessionId, memberId }: UseSessionOptions): UseSessi
     acceptPickupRequest,
     releasePickupRequest,
     lockDeparture,
+    sendChatMessage,
   };
 }

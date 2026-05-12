@@ -15,6 +15,7 @@ public class PickupSuggestionTests
         var closerDriver = TestRoutingSupport.CreateMember(session.Id, "Closer", 0, 0, TransportMode.Car, MemberMobilityRole.SelfTravel);
         var fartherDriver = TestRoutingSupport.CreateMember(session.Id, "Farther", 0, 0.0600, TransportMode.Car, MemberMobilityRole.SelfTravel);
         var passenger = TestRoutingSupport.CreateMember(session.Id, "Passenger", 0, 0.0050, TransportMode.Walking, MemberMobilityRole.NeedsPickup);
+        closerDriver.SetAuthIdentity("user-1", "user@example.com");
         session.AddMember(closerDriver);
         session.AddMember(fartherDriver);
         session.AddMember(passenger);
@@ -23,7 +24,8 @@ public class PickupSuggestionTests
         var handler = new GetPickupSuggestionsHandler(
             new InMemorySessionRepository(session),
             new FakeRouteCostProvider(),
-            new FakeTrafficSnapshotProvider());
+            new FakeTrafficSnapshotProvider(),
+            new FakeCurrentUser("user-1"));
 
         var suggestions = await handler.Handle(new GetPickupSuggestionsQuery(session.Id), CancellationToken.None);
 
@@ -50,10 +52,29 @@ internal sealed class InMemorySessionRepository : ISessionRepository
     public Task<Session?> GetByIdWithDetailsAsync(Guid id, CancellationToken ct = default) =>
         Task.FromResult(id == _session.Id ? _session : null);
 
+    public Task<IReadOnlyList<Session>> GetExpiredAsync(DateTime utcNow, int take, CancellationToken ct = default) =>
+        Task.FromResult<IReadOnlyList<Session>>([]);
+
     public Task AddAsync(Session session, CancellationToken ct = default) => Task.CompletedTask;
 
     public Task UpdateAsync(Session session, CancellationToken ct = default) => Task.CompletedTask;
 
+    public Task RemoveRangeAsync(IEnumerable<Session> sessions, CancellationToken ct = default) => Task.CompletedTask;
+
     public Task<bool> ExistsAsync(Guid id, CancellationToken ct = default) =>
         Task.FromResult(id == _session.Id);
+}
+
+internal sealed class FakeCurrentUser : ICurrentUser
+{
+    public FakeCurrentUser(string subject)
+    {
+        Subject = subject;
+    }
+
+    public string Subject { get; }
+    public string? Email => "user@example.com";
+    public string? Name => "User";
+    public string? PictureUrl => null;
+    public bool IsAuthenticated => true;
 }

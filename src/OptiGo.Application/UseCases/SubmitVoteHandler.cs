@@ -19,6 +19,7 @@ public class SubmitVoteHandler : IRequestHandler<SubmitVoteCommand, SubmitVoteRe
     private readonly IUnitOfWork _unitOfWork;
     private readonly ISessionNotifier _notifier;
     private readonly ILogger<SubmitVoteHandler> _logger;
+    private readonly ICurrentUser _currentUser;
 
     public SubmitVoteHandler(
         ISessionRepository sessionRepository,
@@ -26,7 +27,8 @@ public class SubmitVoteHandler : IRequestHandler<SubmitVoteCommand, SubmitVoteRe
         IOutingRoutePlanner outingRoutePlanner,
         IUnitOfWork unitOfWork,
         ISessionNotifier notifier,
-        ILogger<SubmitVoteHandler> logger)
+        ILogger<SubmitVoteHandler> logger,
+        ICurrentUser currentUser)
     {
         _sessionRepository = sessionRepository;
         _venueRepository = venueRepository;
@@ -34,6 +36,7 @@ public class SubmitVoteHandler : IRequestHandler<SubmitVoteCommand, SubmitVoteRe
         _unitOfWork = unitOfWork;
         _notifier = notifier;
         _logger = logger;
+        _currentUser = currentUser;
     }
 
     public async Task<SubmitVoteResult> Handle(SubmitVoteCommand request, CancellationToken cancellationToken)
@@ -47,6 +50,7 @@ public class SubmitVoteHandler : IRequestHandler<SubmitVoteCommand, SubmitVoteRe
 
         try
         {
+            SessionAuthorization.RequireMemberOwnerOrHost(session, request.MemberId, _currentUser);
 
             var vote = new Vote(request.SessionId, request.MemberId, request.VenueId);
             session.SubmitVote(vote);
@@ -101,9 +105,8 @@ public class SubmitVoteHandler : IRequestHandler<SubmitVoteCommand, SubmitVoteRe
         }
         catch (Exception ex)
         {
-
             _logger.LogWarning(ex, "Failed to submit vote for session {SessionId}, member {MemberId}", request.SessionId, request.MemberId);
-            return new SubmitVoteResult { IsSuccess = false, ErrorMessage = ex.Message };
+            throw;
         }
     }
 }

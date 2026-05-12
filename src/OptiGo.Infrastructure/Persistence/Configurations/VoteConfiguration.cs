@@ -36,6 +36,9 @@ public class VoteConfiguration : IEntityTypeConfiguration<Vote>
             .HasDatabaseName("idx_votes_session_member")
             .IsUnique();
 
+        builder.HasIndex(v => v.SessionId)
+            .HasDatabaseName("idx_votes_session");
+
         builder.HasOne(v => v.Member)
             .WithMany()
             .HasForeignKey(v => v.MemberId)

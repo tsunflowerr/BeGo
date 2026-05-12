@@ -11,6 +11,7 @@ public class OptiGoDbContext : DbContext, IUnitOfWork
     public DbSet<Vote> Votes => Set<Vote>();
     public DbSet<Venue> Venues => Set<Venue>();
     public DbSet<PickupRequest> PickupRequests => Set<PickupRequest>();
+    public DbSet<ChatMessage> ChatMessages => Set<ChatMessage>();
 
     public OptiGoDbContext(DbContextOptions<OptiGoDbContext> options)
         : base(options)

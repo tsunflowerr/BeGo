@@ -27,6 +27,7 @@ public class FindMeetPointHandler : IRequestHandler<FindMeetPointCommand, FindMe
     private readonly IUnitOfWork _unitOfWork;
     private readonly ISessionNotifier _notifier;
     private readonly ILogger<FindMeetPointHandler> _logger;
+    private readonly ICurrentUser _currentUser;
 
     public FindMeetPointHandler(
         ISessionRepository sessionRepository,
@@ -38,7 +39,8 @@ public class FindMeetPointHandler : IRequestHandler<FindMeetPointCommand, FindMe
         IVenueEvaluator venueEvaluator,
         IUnitOfWork unitOfWork,
         ISessionNotifier notifier,
-        ILogger<FindMeetPointHandler> logger)
+        ILogger<FindMeetPointHandler> logger,
+        ICurrentUser currentUser)
     {
         _sessionRepository = sessionRepository;
         _venueRepository = venueRepository;
@@ -50,6 +52,7 @@ public class FindMeetPointHandler : IRequestHandler<FindMeetPointCommand, FindMe
         _unitOfWork = unitOfWork;
         _notifier = notifier;
         _logger = logger;
+        _currentUser = currentUser;
     }
 
     public async Task<FindMeetPointResult> Handle(FindMeetPointCommand request, CancellationToken cancellationToken)
@@ -64,6 +67,8 @@ public class FindMeetPointHandler : IRequestHandler<FindMeetPointCommand, FindMe
         {
             return new FindMeetPointResult { IsSuccess = false, ErrorMessage = "Session has no members." };
         }
+
+        SessionAuthorization.RequireHost(session, _currentUser);
 
         session.ChangeStatus(SessionStatus.Computing);
         await _unitOfWork.SaveChangesAsync(cancellationToken);
@@ -137,7 +142,7 @@ public class FindMeetPointHandler : IRequestHandler<FindMeetPointCommand, FindMe
             _logger.LogError(ex, "Failed to compute meetpoint for session {Id}", session.Id);
             session.ChangeStatus(SessionStatus.Failed);
             await _unitOfWork.SaveChangesAsync(cancellationToken);
-            return new FindMeetPointResult { IsSuccess = false, ErrorMessage = ex.Message };
+            throw;
         }
     }
 

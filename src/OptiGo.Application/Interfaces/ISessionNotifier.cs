@@ -34,4 +34,6 @@ public interface ISessionNotifier
     Task NotifyPickupRequestsUpdatedAsync(Guid sessionId, CancellationToken ct = default);
 
     Task NotifyDepartureLockedAsync(Guid sessionId, CancellationToken ct = default);
+
+    Task NotifyChatMessageSentAsync(Guid sessionId, object message, CancellationToken ct = default);
 }

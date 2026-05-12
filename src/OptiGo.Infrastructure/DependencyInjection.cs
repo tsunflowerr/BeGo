@@ -2,6 +2,7 @@ using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.DependencyInjection;
 using OptiGo.Application.Interfaces;
+using OptiGo.Infrastructure.ExternalServices;
 using OptiGo.Infrastructure.ExternalServices.Groq;
 using OptiGo.Infrastructure.ExternalServices.Mapbox;
 using OptiGo.Infrastructure.Persistence;
@@ -31,6 +32,23 @@ public static class DependencyInjection
 
         services.AddScoped<ISessionRepository, SessionRepository>();
         services.AddScoped<IVenueRepository, VenueRepository>();
+        services.AddScoped<IChatMessageRepository, ChatMessageRepository>();
+
+        var redisConnection = configuration.GetConnectionString("Redis") ?? configuration["Redis:ConnectionString"];
+        if (!string.IsNullOrWhiteSpace(redisConnection))
+        {
+            services.AddStackExchangeRedisCache(options =>
+            {
+                options.Configuration = redisConnection;
+                options.InstanceName = "optigo:";
+            });
+        }
+        else
+        {
+            services.AddDistributedMemoryCache();
+        }
+
+        services.AddTransient<ExternalApiResilienceHandler>();
 
         services.Configure<OptiGo.Infrastructure.ExternalServices.Google.GoogleOptions>(
             configuration.GetSection("Google"));
@@ -38,7 +56,7 @@ public static class DependencyInjection
         services.AddHttpClient<IPlacesProvider, OptiGo.Infrastructure.ExternalServices.Google.GooglePlacesProvider>(client =>
         {
             client.Timeout = TimeSpan.FromSeconds(30);
-        });
+        }).AddHttpMessageHandler<ExternalApiResilienceHandler>();
 
         services.Configure<OptiGo.Infrastructure.ExternalServices.Mapbox.MapboxOptions>(
             configuration.GetSection("Mapbox"));
@@ -46,12 +64,12 @@ public static class DependencyInjection
         services.AddHttpClient<ITravelTimeService, OptiGo.Infrastructure.ExternalServices.Mapbox.MapboxTravelTimeService>(client =>
         {
             client.Timeout = TimeSpan.FromSeconds(30);
-        });
+        }).AddHttpMessageHandler<ExternalApiResilienceHandler>();
 
         services.AddHttpClient<IMeetingPointProvider, OptiGo.Infrastructure.ExternalServices.Mapbox.MapboxMeetingPointProvider>(client =>
         {
             client.Timeout = TimeSpan.FromSeconds(12);
-        });
+        }).AddHttpMessageHandler<ExternalApiResilienceHandler>();
 
         services.AddSingleton<ITrafficSnapshotProvider, DefaultTrafficSnapshotProvider>();
         services.AddSingleton<IRouteCostProvider, CachedRouteCostProvider>();
@@ -66,7 +84,7 @@ public static class DependencyInjection
         services.AddHttpClient<IAIService, GroqAIService>(client =>
         {
             client.Timeout = TimeSpan.FromSeconds(15);
-        });
+        }).AddHttpMessageHandler<ExternalApiResilienceHandler>();
 
         return services;
     }

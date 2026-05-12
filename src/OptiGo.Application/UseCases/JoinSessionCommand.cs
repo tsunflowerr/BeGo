@@ -2,6 +2,7 @@ using MediatR;
 using OptiGo.Application.Interfaces;
 using OptiGo.Domain.Entities;
 using OptiGo.Domain.Enums;
+using OptiGo.Domain.Exceptions;
 
 namespace OptiGo.Application.UseCases;
 
@@ -19,18 +20,20 @@ public class JoinSessionHandler : IRequestHandler<JoinSessionCommand, Guid>
     private readonly ISessionRepository _sessionRepository;
     private readonly IUnitOfWork _unitOfWork;
     private readonly ISessionNotifier _notifier;
+    private readonly ICurrentUser _currentUser;
 
-    public JoinSessionHandler(ISessionRepository sessionRepository, IUnitOfWork unitOfWork, ISessionNotifier notifier)
+    public JoinSessionHandler(ISessionRepository sessionRepository, IUnitOfWork unitOfWork, ISessionNotifier notifier, ICurrentUser currentUser)
     {
         _sessionRepository = sessionRepository;
         _unitOfWork = unitOfWork;
         _notifier = notifier;
+        _currentUser = currentUser;
     }
 
     public async Task<Guid> Handle(JoinSessionCommand request, CancellationToken cancellationToken)
     {
         var session = await _sessionRepository.GetByIdWithDetailsAsync(request.SessionId, cancellationToken);
-        if (session == null) throw new Exception("Session not found");
+        if (session == null) throw new DomainException("Session not found");
 
         var coordinate = new Domain.ValueObjects.Coordinate(request.Latitude, request.Longitude);
         var member = new Member(
@@ -39,7 +42,9 @@ public class JoinSessionHandler : IRequestHandler<JoinSessionCommand, Guid>
             coordinate,
             request.TransportMode,
             request.MobilityRole,
-            request.AvatarUrl);
+            request.AvatarUrl,
+            _currentUser.Subject,
+            _currentUser.Email);
 
         session.AddMember(member);
         if (member.NeedsPickup())

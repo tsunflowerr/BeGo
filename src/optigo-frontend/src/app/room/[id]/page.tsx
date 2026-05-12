@@ -8,7 +8,9 @@ import { FormEvent, ReactNode, useCallback, useEffect, useMemo, useRef, useState
 import { signIn, signOut as signOutGoogle, useSession as useAuthSession } from "next-auth/react";
 import { api } from "@/lib/api";
 import {
+  buildGoogleMapsSearchUrl,
   buildShareUrl,
+  canShowLocalTestVotingTools,
   canShowLocalTestTools,
   formatCompactDistance,
   formatCompactDuration,
@@ -17,6 +19,7 @@ import {
 import { useGeolocation, useSession as useRoomSession } from "@/hooks";
 import {
   Member,
+  ChatMessage,
   MemberMobilityRole,
   PickupRequest,
   PickupRequestStatus,
@@ -24,6 +27,7 @@ import {
   SessionStatus,
   TransportMode,
   Venue,
+  Vote,
   formatDistance,
   formatDuration,
   mobilityRoleLabels,
@@ -62,7 +66,7 @@ export default function RoomPage() {
   const previousMemberCount = useRef(0);
 
   const location = useGeolocation();
-  const sessionState = useRoomSession({ sessionId, memberId });
+  const sessionState = useRoomSession({ sessionId, memberId, enabled: auth.status === "authenticated" });
   const {
     session,
     members,
@@ -83,15 +87,17 @@ export default function RoomPage() {
     isVoting,
     isRoutePreview,
     isCompleted,
-    isConnected,
-    memberLeaveNotice,
-    notifyMemberLeft,
+  isConnected,
+  memberLeaveNotice,
+  chatMessages,
+  notifyMemberLeft,
     refreshSession,
     startOptimization,
     submitVote,
     acceptPickupRequest,
-    releasePickupRequest,
-    lockDeparture,
+  releasePickupRequest,
+  lockDeparture,
+  sendChatMessage,
   } = sessionState;
 
   useEffect(() => {
@@ -140,6 +146,12 @@ export default function RoomPage() {
     isHost,
     status,
   });
+  const canShowTestVotingTools = canShowLocalTestVotingTools({
+    hostname,
+    hasJoined,
+    isHost,
+    status,
+  });
 
   const leaveRoomAndSignOut = useCallback(async () => {
     const leavingMember = currentMember;
@@ -181,12 +193,13 @@ export default function RoomPage() {
   }, [session?.queryText, startOptimization, toast]);
 
   const voteVenue = useCallback(
-    async (venueId: string) => {
+    async (venueId: string, voterMemberId?: string) => {
       setSelectedVenueId(venueId);
-      await submitVote(venueId);
-      toast.push("Vote submitted");
+      await submitVote(venueId, voterMemberId);
+      const voter = voterMemberId ? members.find((member) => member.id === voterMemberId) : null;
+      toast.push(voter ? `Vote submitted for ${voter.name}` : "Vote submitted");
     },
-    [submitVote, toast]
+    [members, submitVote, toast]
   );
 
   if (loading) {
@@ -273,9 +286,12 @@ export default function RoomPage() {
             {isVoting && topVenues.length > 0 && (
               <VotingSection
                 venues={topVenues}
+                members={members}
+                votes={session?.votes ?? []}
                 selectedVenueId={displaySelectedVenueId}
                 hasVoted={hasVoted}
                 currentMemberId={memberId ?? undefined}
+                canUseTestVoting={canShowTestVotingTools}
                 votingProgress={votingProgress}
                 onVote={voteVenue}
               />
@@ -314,6 +330,12 @@ export default function RoomPage() {
                 await releasePickupRequest(requestId);
                 toast.push("Pickup released");
               }}
+            />
+            <ChatPanel
+              messages={chatMessages}
+              currentMemberId={memberId ?? undefined}
+              disabled={!currentMember}
+              onSend={sendChatMessage}
             />
           </aside>
         </section>
@@ -637,23 +659,121 @@ function PickupPanel({
   );
 }
 
+function ChatPanel({
+  messages,
+  currentMemberId,
+  disabled,
+  onSend,
+}: {
+  messages: ChatMessage[];
+  currentMemberId?: string;
+  disabled: boolean;
+  onSend: (text: string) => Promise<void>;
+}) {
+  const [draft, setDraft] = useState("");
+  const [isSending, setIsSending] = useState(false);
+  const scrollRef = useRef<HTMLDivElement>(null);
+
+  useEffect(() => {
+    const timer = window.setTimeout(() => {
+      scrollRef.current?.scrollTo({ top: scrollRef.current.scrollHeight });
+    }, 0);
+    return () => window.clearTimeout(timer);
+  }, [messages.length]);
+
+  async function submit(event: FormEvent<HTMLFormElement>) {
+    event.preventDefault();
+    const text = draft.trim();
+    if (!text || isSending || disabled) return;
+
+    setIsSending(true);
+    try {
+      await onSend(text);
+      setDraft("");
+    } finally {
+      setIsSending(false);
+    }
+  }
+
+  return (
+    <section className="bego-hard-card bg-white p-5">
+      <div className="flex items-center justify-between gap-3">
+        <h2 className="text-xl font-black">Room chat</h2>
+        <span className="bego-chip bg-[#f472b6]">{messages.length}</span>
+      </div>
+      <div ref={scrollRef} className="bego-scrollbar mt-4 grid max-h-[280px] min-h-[180px] content-start gap-2 overflow-y-auto pr-1">
+        {messages.length === 0 ? (
+          <p className="rounded-2xl border-2 border-[#d8e3ea] bg-[#f6fcff] p-3 text-sm font-bold text-[#64748b]">No messages yet.</p>
+        ) : (
+          messages.map((message) => {
+            const isMine = message.memberId === currentMemberId;
+            return (
+              <div key={message.id} className={`rounded-2xl border-2 border-[#172033] p-3 ${isMine ? "bg-[#fff7dc]" : "bg-[#f6fcff]"}`}>
+                <div className="flex items-center justify-between gap-2">
+                  <p className="truncate text-sm font-black">{message.senderName}</p>
+                  <span className="text-[11px] font-bold text-[#64748b]">{new Date(message.createdAt).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" })}</span>
+                </div>
+                <p className="mt-1 whitespace-pre-wrap break-words text-sm font-semibold text-[#172033]">{message.text}</p>
+              </div>
+            );
+          })
+        )}
+      </div>
+      <form onSubmit={submit} className="mt-4 grid gap-2">
+        <textarea
+          className="bego-input min-h-20 resize-none"
+          value={draft}
+          onChange={(event) => setDraft(event.target.value)}
+          maxLength={1000}
+          disabled={disabled || isSending}
+          placeholder={disabled ? "Join the room to chat" : "Message the room"}
+        />
+        <button type="submit" className="bego-primary w-full" disabled={disabled || isSending || draft.trim().length === 0}>
+          {isSending ? "Sending..." : "Send message"}
+        </button>
+      </form>
+    </section>
+  );
+}
+
 function VotingSection({
   venues,
+  members,
+  votes,
   selectedVenueId,
   hasVoted,
   currentMemberId,
+  canUseTestVoting,
   votingProgress,
   onVote,
 }: {
   venues: Venue[];
+  members: Member[];
+  votes: Vote[];
   selectedVenueId: string | null;
   hasVoted: boolean;
   currentMemberId?: string;
+  canUseTestVoting: boolean;
   votingProgress: { total: number; voted: number };
-  onVote: (venueId: string) => Promise<void>;
+  onVote: (venueId: string, voterMemberId?: string) => Promise<void>;
 }) {
   const [detailVenue, setDetailVenue] = useState<Venue | null>(null);
+  const [testVoterMemberId, setTestVoterMemberId] = useState<string>("");
   const progress = votingProgress.total > 0 ? Math.round((votingProgress.voted / votingProgress.total) * 100) : 0;
+  const votedMemberIds = useMemo(() => new Set(votes.map((vote) => vote.memberId)), [votes]);
+  const availableTestMembers = useMemo(
+    () => members.filter((member) => !votedMemberIds.has(member.id)),
+    [members, votedMemberIds]
+  );
+  const selectedTestVoter = members.find((member) => member.id === testVoterMemberId);
+  const fallbackTestVoter = availableTestMembers.find((member) => member.id !== currentMemberId) ?? availableTestMembers[0] ?? selectedTestVoter;
+  const activeTestVoterMemberId = selectedTestVoter && !votedMemberIds.has(selectedTestVoter.id)
+    ? selectedTestVoter.id
+    : fallbackTestVoter?.id ?? "";
+  const activeMemberId = canUseTestVoting && activeTestVoterMemberId ? activeTestVoterMemberId : currentMemberId;
+  const activeVoteVenueId = activeMemberId ? votes.find((vote) => vote.memberId === activeMemberId)?.venueId ?? null : null;
+  const activeSelectedVenueId = activeVoteVenueId ?? (activeMemberId === currentMemberId ? selectedVenueId : null);
+  const activeHasVoted = activeMemberId ? votedMemberIds.has(activeMemberId) : hasVoted;
 
   return (
     <>
@@ -669,16 +789,40 @@ function VotingSection({
             </div>
           </div>
         </div>
+        {canUseTestVoting && (
+          <div className="mt-5 grid gap-3 rounded-2xl border-2 border-[#172033] bg-[#fff7dc] p-4 md:grid-cols-[1fr_auto] md:items-end">
+            <label className="grid gap-2 font-black">
+              Vote as test member
+              <select
+                className="bego-input"
+                value={activeTestVoterMemberId}
+                onChange={(event) => setTestVoterMemberId(event.target.value)}
+              >
+                {members.map((member) => {
+                  const voted = votedMemberIds.has(member.id);
+                  return (
+                    <option key={member.id} value={member.id}>
+                      {member.name}{voted ? " - voted" : ""}
+                    </option>
+                  );
+                })}
+              </select>
+            </label>
+            <span className="bego-chip bg-white">
+              {availableTestMembers.length} left
+            </span>
+          </div>
+        )}
         <div className="mt-5 grid gap-4 lg:grid-cols-3">
           {venues.map((venue, index) => (
             <VenueChoiceCard
               key={venue.venueId}
               venue={venue}
               rank={index + 1}
-              selected={selectedVenueId === venue.venueId}
-              disabled={hasVoted}
-              currentMemberId={currentMemberId}
-              onVote={onVote}
+              selected={activeSelectedVenueId === venue.venueId}
+              disabled={activeHasVoted || !activeMemberId}
+              currentMemberId={activeMemberId}
+              onVote={(venueId) => onVote(venueId, activeMemberId)}
               onDetails={() => setDetailVenue(venue)}
             />
           ))}
@@ -892,6 +1036,14 @@ function VenueDetailsModal({
 }
 
 function RouteSection({ venue, isHost, canLock, onLock }: { venue: Venue; isHost: boolean; canLock: boolean; onLock: () => Promise<void> }) {
+  const mapsUrl = buildGoogleMapsSearchUrl({
+    name: venue.name,
+    address: venue.address,
+    latitude: venue.latitude,
+    longitude: venue.longitude,
+    placeId: venue.venueId,
+  });
+
   return (
     <section className="bego-hard-card bg-white p-5">
       <div className="flex flex-col gap-3 md:flex-row md:items-end md:justify-between">
@@ -902,11 +1054,16 @@ function RouteSection({ venue, isHost, canLock, onLock }: { venue: Venue; isHost
             Group total {formatDuration(venue.totalTimeSeconds)} - walking {formatDistance(venue.totalWalkingDistanceMeters)}
           </p>
         </div>
-        {isHost && canLock && (
-          <button type="button" className="bego-primary" onClick={() => void onLock()}>
-            Lock route
-          </button>
-        )}
+        <div className="flex flex-wrap gap-2">
+          <a className="bego-secondary inline-flex items-center" href={mapsUrl} target="_blank" rel="noreferrer">
+            Open in Google Maps
+          </a>
+          {isHost && canLock && (
+            <button type="button" className="bego-primary" onClick={() => void onLock()}>
+              Lock route
+            </button>
+          )}
+        </div>
       </div>
       {venue.optimizationReason && <p className="mt-4 rounded-2xl border-2 border-[#172033] bg-[#fff7dc] p-4 font-bold">{venue.optimizationReason}</p>}
       <div className="mt-5 grid gap-4">

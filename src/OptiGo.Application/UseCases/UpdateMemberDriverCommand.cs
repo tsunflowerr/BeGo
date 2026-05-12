@@ -12,12 +12,14 @@ public class UpdateMemberDriverHandler : IRequestHandler<UpdateMemberDriverComma
     private readonly ISessionRepository _sessionRepository;
     private readonly IUnitOfWork _unitOfWork;
     private readonly ISessionNotifier _notifier;
+    private readonly ICurrentUser _currentUser;
 
-    public UpdateMemberDriverHandler(ISessionRepository sessionRepository, IUnitOfWork unitOfWork, ISessionNotifier notifier)
+    public UpdateMemberDriverHandler(ISessionRepository sessionRepository, IUnitOfWork unitOfWork, ISessionNotifier notifier, ICurrentUser currentUser)
     {
         _sessionRepository = sessionRepository;
         _unitOfWork = unitOfWork;
         _notifier = notifier;
+        _currentUser = currentUser;
     }
 
     public async Task<Unit> Handle(UpdateMemberDriverCommand request, CancellationToken cancellationToken)
@@ -26,6 +28,8 @@ public class UpdateMemberDriverHandler : IRequestHandler<UpdateMemberDriverComma
 
         if (session == null)
             throw new DomainException($"Session {request.SessionId} not found.");
+
+        SessionAuthorization.RequireHost(session, _currentUser);
 
         session.SetMemberDriver(request.MemberId, request.DriverId);
 

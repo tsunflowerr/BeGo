@@ -2,7 +2,9 @@ import assert from "node:assert/strict";
 import test from "node:test";
 
 import {
+  buildGoogleMapsSearchUrl,
   buildShareUrl,
+  canShowLocalTestVotingTools,
   canShowLocalTestTools,
   clampBenchmarkScenarioCount,
   formatCompactDistance,
@@ -68,6 +70,42 @@ test("local test tools are exposed only for host on localhost", () => {
   );
 });
 
+test("local test voting tools are exposed only during voting", () => {
+  assert.equal(
+    canShowLocalTestVotingTools({
+      hostname: "localhost",
+      hasJoined: true,
+      isHost: true,
+      status: "Voting",
+    }),
+    true
+  );
+  assert.equal(
+    canShowLocalTestVotingTools({
+      hostname: "localhost",
+      hasJoined: true,
+      isHost: true,
+      status: "WaitingForMembers",
+    }),
+    false
+  );
+});
+
 test("share URL builder removes trailing slashes", () => {
   assert.equal(buildShareUrl("http://localhost:3000///", "abc"), "http://localhost:3000/room/abc");
+});
+
+test("google maps URL builder includes venue text and place id", () => {
+  const url = buildGoogleMapsSearchUrl({
+    name: "Bun Cha Test",
+    address: "1 Hang Manh, Ha Noi",
+    latitude: 21.032,
+    longitude: 105.849,
+    placeId: "ChIJtest",
+  });
+  const parsed = new URL(url);
+
+  assert.equal(url.startsWith("https://www.google.com/maps/search/?api=1"), true);
+  assert.equal(parsed.searchParams.get("query"), "Bun Cha Test, 1 Hang Manh, Ha Noi");
+  assert.equal(parsed.searchParams.get("query_place_id"), "ChIJtest");
 });

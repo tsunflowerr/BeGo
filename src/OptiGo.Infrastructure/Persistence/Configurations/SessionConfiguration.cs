@@ -39,6 +39,9 @@ public class SessionConfiguration : IEntityTypeConfiguration<Session>
             .HasColumnName("expires_at")
             .IsRequired();
 
+        builder.HasIndex(s => s.ExpiresAt)
+            .HasDatabaseName("idx_sessions_expires_at");
+
         builder.Property(s => s.WinningVenueId)
             .HasColumnName("winning_venue_id")
             .HasMaxLength(100);

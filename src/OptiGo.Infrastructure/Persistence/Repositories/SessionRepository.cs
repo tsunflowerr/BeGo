@@ -27,6 +27,15 @@ public class SessionRepository : ISessionRepository
             .FirstOrDefaultAsync(s => s.Id == id, ct);
     }
 
+    public async Task<IReadOnlyList<Session>> GetExpiredAsync(DateTime utcNow, int take, CancellationToken ct = default)
+    {
+        return await _db.Sessions
+            .Where(s => s.ExpiresAt <= utcNow)
+            .OrderBy(s => s.ExpiresAt)
+            .Take(take)
+            .ToListAsync(ct);
+    }
+
     public async Task AddAsync(Session session, CancellationToken ct = default)
     {
         await _db.Sessions.AddAsync(session, ct);
@@ -36,6 +45,12 @@ public class SessionRepository : ISessionRepository
     {
 
         _db.Sessions.Update(session);
+        return Task.CompletedTask;
+    }
+
+    public Task RemoveRangeAsync(IEnumerable<Session> sessions, CancellationToken ct = default)
+    {
+        _db.Sessions.RemoveRange(sessions);
         return Task.CompletedTask;
     }
 

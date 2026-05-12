@@ -39,6 +39,14 @@ public class MemberConfiguration : IEntityTypeConfiguration<Member>
             .HasColumnName("avatar_url")
             .HasMaxLength(2048);
 
+        builder.Property(m => m.AuthSubject)
+            .HasColumnName("auth_subject")
+            .HasMaxLength(255);
+
+        builder.Property(m => m.AuthEmail)
+            .HasColumnName("auth_email")
+            .HasMaxLength(320);
+
         builder.Property(m => m.TransportMode)
             .HasColumnName("transport_mode")
             .HasConversion<string>()
@@ -61,5 +69,8 @@ public class MemberConfiguration : IEntityTypeConfiguration<Member>
 
         builder.HasIndex(m => m.SessionId)
             .HasDatabaseName("idx_members_session");
+
+        builder.HasIndex(m => new { m.SessionId, m.AuthSubject })
+            .HasDatabaseName("idx_members_session_auth_subject");
     }
 }

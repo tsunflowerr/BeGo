@@ -146,4 +146,12 @@ public class SignalRSessionNotifier : ISessionNotifier
             timestamp = DateTime.UtcNow
         }, ct);
     }
+
+    public async Task NotifyChatMessageSentAsync(Guid sessionId, object message, CancellationToken ct = default)
+    {
+        var group = SessionHub.GetGroupName(sessionId.ToString());
+        _logger.LogDebug("→ SignalR [{Group}] ChatMessageSent", group);
+
+        await _hubContext.Clients.Group(group).SendAsync("ChatMessageSent", message, ct);
+    }
 }

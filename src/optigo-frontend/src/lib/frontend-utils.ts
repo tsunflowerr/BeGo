@@ -115,7 +115,35 @@ export function canShowLocalTestTools(options: {
   );
 }
 
+export function canShowLocalTestVotingTools(options: {
+  hostname: string;
+  hasJoined: boolean;
+  isHost: boolean;
+  status: string;
+}): boolean {
+  const isLocalhost = options.hostname === "localhost" || options.hostname === "127.0.0.1";
+  return isLocalhost && options.hasJoined && options.isHost && options.status === "Voting";
+}
+
 export function buildShareUrl(origin: string, sessionId: string): string {
   const safeOrigin = origin.replace(/\/+$/, "");
   return `${safeOrigin}/room/${sessionId}`;
+}
+
+export function buildGoogleMapsSearchUrl(venue: {
+  name: string;
+  address?: string | null;
+  latitude: number;
+  longitude: number;
+  placeId?: string | null;
+}): string {
+  const queryParts = [venue.name, venue.address].filter((part): part is string => Boolean(part?.trim()));
+  const query = queryParts.length > 0 ? queryParts.join(", ") : `${venue.latitude},${venue.longitude}`;
+  const url = new URL("https://www.google.com/maps/search/");
+  url.searchParams.set("api", "1");
+  url.searchParams.set("query", query);
+  if (venue.placeId?.trim()) {
+    url.searchParams.set("query_place_id", venue.placeId);
+  }
+  return url.toString();
 }

@@ -217,6 +217,15 @@ export interface Vote {
   venueId: string;
 }
 
+export interface ChatMessage {
+  id: string;
+  sessionId: string;
+  memberId: string;
+  senderName: string;
+  text: string;
+  createdAt: string;
+}
+
 // Vote response
 export interface VoteResponse {
   message: string;
@@ -284,6 +293,8 @@ export interface DepartureLockedEvent {
   sessionId: string;
   timestamp: string;
 }
+
+export type ChatMessageSentEvent = ChatMessage;
 
 export interface SignalRError {
   code: string;

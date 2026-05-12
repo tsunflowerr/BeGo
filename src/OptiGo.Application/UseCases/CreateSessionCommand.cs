@@ -23,11 +23,16 @@ public class CreateSessionHandler : MediatR.IRequestHandler<CreateSessionCommand
 {
     private readonly Application.Interfaces.ISessionRepository _sessionRepository;
     private readonly Application.Interfaces.IUnitOfWork _unitOfWork;
+    private readonly Application.Interfaces.ICurrentUser _currentUser;
 
-    public CreateSessionHandler(Application.Interfaces.ISessionRepository sessionRepository, Application.Interfaces.IUnitOfWork unitOfWork)
+    public CreateSessionHandler(
+        Application.Interfaces.ISessionRepository sessionRepository,
+        Application.Interfaces.IUnitOfWork unitOfWork,
+        Application.Interfaces.ICurrentUser currentUser)
     {
         _sessionRepository = sessionRepository;
         _unitOfWork = unitOfWork;
+        _currentUser = currentUser;
     }
 
     public async Task<CreateSessionResult> Handle(CreateSessionCommand request, CancellationToken cancellationToken)
@@ -45,7 +50,9 @@ public class CreateSessionHandler : MediatR.IRequestHandler<CreateSessionCommand
             hostLocation,
             request.TransportMode,
             request.MobilityRole,
-            request.AvatarUrl);
+            request.AvatarUrl,
+            _currentUser.Subject,
+            _currentUser.Email);
         session.AddMember(hostMember);
 
         if (hostMember.NeedsPickup())

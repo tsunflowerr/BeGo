@@ -11,15 +11,18 @@ public class LockDepartureHandler : IRequestHandler<LockDepartureCommand, Unit>
     private readonly ISessionRepository _sessionRepository;
     private readonly IUnitOfWork _unitOfWork;
     private readonly ISessionNotifier _notifier;
+    private readonly ICurrentUser _currentUser;
 
     public LockDepartureHandler(
         ISessionRepository sessionRepository,
         IUnitOfWork unitOfWork,
-        ISessionNotifier notifier)
+        ISessionNotifier notifier,
+        ICurrentUser currentUser)
     {
         _sessionRepository = sessionRepository;
         _unitOfWork = unitOfWork;
         _notifier = notifier;
+        _currentUser = currentUser;
     }
 
     public async Task<Unit> Handle(LockDepartureCommand request, CancellationToken cancellationToken)
@@ -27,6 +30,8 @@ public class LockDepartureHandler : IRequestHandler<LockDepartureCommand, Unit>
         var session = await _sessionRepository.GetByIdWithDetailsAsync(request.SessionId, cancellationToken);
         if (session == null)
             throw new DomainException($"Session {request.SessionId} not found.");
+
+        SessionAuthorization.RequireHost(session, _currentUser);
 
         session.LockDeparture();
 

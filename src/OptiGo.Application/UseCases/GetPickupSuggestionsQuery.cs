@@ -26,15 +26,18 @@ public class GetPickupSuggestionsHandler : IRequestHandler<GetPickupSuggestionsQ
     private readonly ISessionRepository _sessionRepository;
     private readonly IRouteCostProvider _routeCostProvider;
     private readonly ITrafficSnapshotProvider _trafficSnapshotProvider;
+    private readonly ICurrentUser _currentUser;
 
     public GetPickupSuggestionsHandler(
         ISessionRepository sessionRepository,
         IRouteCostProvider routeCostProvider,
-        ITrafficSnapshotProvider trafficSnapshotProvider)
+        ITrafficSnapshotProvider trafficSnapshotProvider,
+        ICurrentUser currentUser)
     {
         _sessionRepository = sessionRepository;
         _routeCostProvider = routeCostProvider;
         _trafficSnapshotProvider = trafficSnapshotProvider;
+        _currentUser = currentUser;
     }
 
     public async Task<IReadOnlyList<PickupSuggestionDto>> Handle(
@@ -44,6 +47,8 @@ public class GetPickupSuggestionsHandler : IRequestHandler<GetPickupSuggestionsQ
         var session = await _sessionRepository.GetByIdWithDetailsAsync(request.SessionId, cancellationToken);
         if (session == null)
             return [];
+
+        SessionAuthorization.RequireCurrentMember(session, _currentUser);
 
         var pendingRequests = session.PickupRequests
             .Where(pickupRequest => pickupRequest.IsPending())

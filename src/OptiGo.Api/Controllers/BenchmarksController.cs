@@ -1,5 +1,6 @@
 using MediatR;
 using Microsoft.AspNetCore.Mvc;
+using Microsoft.AspNetCore.RateLimiting;
 using OptiGo.Application.UseCases;
 
 namespace OptiGo.Api.Controllers;
@@ -16,6 +17,7 @@ public class BenchmarksController : ControllerBase
     }
 
     [HttpGet("outing")]
+    [EnableRateLimiting("expensive")]
     public async Task<IActionResult> RunOutingBenchmark(
         [FromQuery] int seed = 20260505,
         [FromQuery] int scenarioCount = 18,
