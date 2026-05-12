@@ -32,6 +32,11 @@ namespace OptiGo.Infrastructure.Persistence.Migrations
                         .HasColumnType("uuid")
                         .HasColumnName("driver_id");
 
+                    b.Property<string>("AvatarUrl")
+                        .HasMaxLength(2048)
+                        .HasColumnType("character varying(2048)")
+                        .HasColumnName("avatar_url");
+
                     b.Property<DateTime>("JoinedAt")
                         .HasColumnType("timestamp with time zone")
                         .HasColumnName("joined_at");

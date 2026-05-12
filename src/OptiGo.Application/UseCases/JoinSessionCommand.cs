@@ -11,7 +11,8 @@ public record JoinSessionCommand(
     double Latitude,
     double Longitude,
     TransportMode TransportMode,
-    MemberMobilityRole MobilityRole = MemberMobilityRole.SelfTravel) : IRequest<Guid>;
+    MemberMobilityRole MobilityRole = MemberMobilityRole.SelfTravel,
+    string? AvatarUrl = null) : IRequest<Guid>;
 
 public class JoinSessionHandler : IRequestHandler<JoinSessionCommand, Guid>
 {
@@ -37,7 +38,8 @@ public class JoinSessionHandler : IRequestHandler<JoinSessionCommand, Guid>
             request.MemberName,
             coordinate,
             request.TransportMode,
-            request.MobilityRole);
+            request.MobilityRole,
+            request.AvatarUrl);
 
         session.AddMember(member);
         if (member.NeedsPickup())
@@ -53,6 +55,7 @@ public class JoinSessionHandler : IRequestHandler<JoinSessionCommand, Guid>
             member.Name,
             member.Latitude,
             member.Longitude,
+            member.AvatarUrl,
             member.TransportMode,
             member.MobilityRole,
             member.JoinedAt,

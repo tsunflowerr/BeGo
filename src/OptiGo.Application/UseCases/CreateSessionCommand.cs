@@ -10,6 +10,7 @@ public record CreateSessionCommand(
     double Longitude,
     TransportMode TransportMode,
     MemberMobilityRole MobilityRole = MemberMobilityRole.SelfTravel,
+    string? AvatarUrl = null,
     string DefaultQuery = "") : MediatR.IRequest<CreateSessionResult>;
 
 public class CreateSessionResult
@@ -43,7 +44,8 @@ public class CreateSessionHandler : MediatR.IRequestHandler<CreateSessionCommand
             request.HostName,
             hostLocation,
             request.TransportMode,
-            request.MobilityRole);
+            request.MobilityRole,
+            request.AvatarUrl);
         session.AddMember(hostMember);
 
         if (hostMember.NeedsPickup())

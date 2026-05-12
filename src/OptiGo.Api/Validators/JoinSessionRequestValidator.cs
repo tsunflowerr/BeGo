@@ -33,5 +33,18 @@ public class JoinSessionRequestValidator : AbstractValidator<JoinSessionRequest>
         RuleFor(x => x.MobilityRole)
             .IsInEnum()
             .WithMessage("Vai trò di chuyển không hợp lệ");
+
+        RuleFor(x => x.AvatarUrl)
+            .MaximumLength(2048)
+            .WithMessage("Avatar URL không được vượt quá 2048 ký tự")
+            .Must(BeValidHttpUrl)
+            .WithMessage("Avatar URL phải là URL http/https hợp lệ")
+            .When(x => !string.IsNullOrWhiteSpace(x.AvatarUrl));
+    }
+
+    private static bool BeValidHttpUrl(string? value)
+    {
+        return Uri.TryCreate(value, UriKind.Absolute, out var uri) &&
+            (uri.Scheme == Uri.UriSchemeHttp || uri.Scheme == Uri.UriSchemeHttps);
     }
 }

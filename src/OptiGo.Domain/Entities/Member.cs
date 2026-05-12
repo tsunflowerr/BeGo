@@ -11,6 +11,7 @@ public class Member
     public string Name { get; private set; } = null!;
     public double Latitude { get; private set; }
     public double Longitude { get; private set; }
+    public string? AvatarUrl { get; private set; }
     public TransportMode TransportMode { get; private set; }
     public MemberMobilityRole MobilityRole { get; private set; }
     public Guid? DriverId { get; private set; }
@@ -24,13 +25,15 @@ public class Member
         string name,
         Coordinate location,
         TransportMode transportMode = TransportMode.Motorbike,
-        MemberMobilityRole mobilityRole = MemberMobilityRole.SelfTravel)
+        MemberMobilityRole mobilityRole = MemberMobilityRole.SelfTravel,
+        string? avatarUrl = null)
     {
         Id = Guid.NewGuid();
         SessionId = sessionId;
         Name = name ?? throw new ArgumentNullException(nameof(name));
         Latitude = location.Latitude;
         Longitude = location.Longitude;
+        AvatarUrl = string.IsNullOrWhiteSpace(avatarUrl) ? null : avatarUrl.Trim();
         TransportMode = transportMode;
         MobilityRole = mobilityRole;
         JoinedAt = DateTime.UtcNow;
@@ -45,6 +48,11 @@ public class Member
     {
         Latitude = newLocation.Latitude;
         Longitude = newLocation.Longitude;
+    }
+
+    public void UpdateAvatar(string? avatarUrl)
+    {
+        AvatarUrl = string.IsNullOrWhiteSpace(avatarUrl) ? null : avatarUrl.Trim();
     }
 
     public void ChangeTransportMode(TransportMode newMode)

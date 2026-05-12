@@ -1,8 +1,11 @@
 "use client";
 
+/* eslint-disable @next/next/no-img-element */
+
 import Link from "next/link";
 import { useParams } from "next/navigation";
 import { FormEvent, ReactNode, useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { signIn, signOut as signOutGoogle, useSession as useAuthSession } from "next-auth/react";
 import { api } from "@/lib/api";
 import {
   buildShareUrl,
@@ -11,7 +14,7 @@ import {
   formatCompactDuration,
   getStatusMeta,
 } from "@/lib/frontend-utils";
-import { useGeolocation, useSession } from "@/hooks";
+import { useGeolocation, useSession as useRoomSession } from "@/hooks";
 import {
   Member,
   MemberMobilityRole,
@@ -46,6 +49,7 @@ const hanoiSeeds = [
 
 export default function RoomPage() {
   const params = useParams();
+  const auth = useAuthSession();
   const sessionId = typeof params.id === "string" ? params.id : Array.isArray(params.id) ? params.id[0] ?? "" : "";
   const [memberId, setMemberId] = useState<string | null>(null);
   const [hasJoined, setHasJoined] = useState(false);
@@ -58,7 +62,7 @@ export default function RoomPage() {
   const previousMemberCount = useRef(0);
 
   const location = useGeolocation();
-  const sessionState = useSession({ sessionId, memberId });
+  const sessionState = useRoomSession({ sessionId, memberId });
   const {
     session,
     members,
@@ -135,7 +139,7 @@ export default function RoomPage() {
     status,
   });
 
-  const signOut = useCallback(() => {
+  const switchRoomUser = useCallback(() => {
     window.localStorage.removeItem(`room-${sessionId}-memberId`);
     setMemberId(null);
     setHasJoined(false);
@@ -208,7 +212,17 @@ export default function RoomPage() {
           <div className="flex flex-wrap gap-2">
             <Link className="bego-secondary inline-flex items-center" href="/benchmark">Benchmark</Link>
             {currentMember && <span className="bego-chip bg-white">You: {currentMember.name}</span>}
-            <button type="button" className="bego-secondary" onClick={signOut}>Switch user</button>
+            {auth.status === "authenticated" ? (
+              <button type="button" className="bego-secondary inline-flex items-center gap-2" onClick={() => void signOutGoogle()}>
+                {auth.data.user?.image && (
+                  <img src={auth.data.user.image} alt="" className="h-6 w-6 rounded-full border-2 border-[#172033]" referrerPolicy="no-referrer" />
+                )}
+                Sign out
+              </button>
+            ) : (
+              <button type="button" className="bego-secondary" onClick={() => void signIn("google")}>Sign in with Google</button>
+            )}
+            <button type="button" className="bego-secondary" onClick={switchRoomUser}>Switch room user</button>
           </div>
         </header>
 
@@ -301,6 +315,11 @@ export default function RoomPage() {
         onJoin={joinRoom}
         onClose={() => setShowJoin(false)}
         onRequestLocation={location.refresh}
+        authStatus={auth.status}
+        authUser={{
+          name: auth.data?.user?.name ?? "",
+          image: auth.data?.user?.image ?? null,
+        }}
       />
 
       {canShowTestTools && (
@@ -452,6 +471,26 @@ function SharePanel({ sessionId }: { sessionId: string }) {
   );
 }
 
+function MemberAvatar({ member, sizeClass }: { member: Pick<Member, "name" | "avatarUrl">; sizeClass: string }) {
+  if (member.avatarUrl) {
+    return <img src={member.avatarUrl} alt="" className={`${sizeClass} rounded-full object-cover`} referrerPolicy="no-referrer" />;
+  }
+
+  return <span className={`${sizeClass} grid place-items-center rounded-full`}>{member.name.slice(0, 1).toUpperCase()}</span>;
+}
+
+function ProfileAvatar({ name, image, sizeClass }: { name: string; image?: string | null; sizeClass: string }) {
+  if (image) {
+    return <img src={image} alt="" className={`${sizeClass} rounded-full border-2 border-[#172033] object-cover shadow-[3px_3px_0_#172033]`} referrerPolicy="no-referrer" />;
+  }
+
+  return (
+    <span className={`${sizeClass} grid place-items-center rounded-full border-2 border-[#172033] bg-[#f7c948] font-black shadow-[3px_3px_0_#172033]`}>
+      {(name || "U").slice(0, 1).toUpperCase()}
+    </span>
+  );
+}
+
 function MembersPanel({
   members,
   hostMemberId,
@@ -489,8 +528,8 @@ function MembersPanel({
           const isCurrent = member.id === currentMemberId;
           const body = (
             <>
-              <div className={`grid h-11 w-11 place-items-center rounded-full border-2 border-[#172033] font-black text-white shadow-[3px_3px_0_#172033] ${member.id === hostMemberId ? "bg-[#ff3b1f]" : "bg-[#8b5cf6]"}`}>
-                {member.name.slice(0, 1).toUpperCase()}
+              <div className={`grid h-11 w-11 overflow-hidden rounded-full border-2 border-[#172033] font-black text-white shadow-[3px_3px_0_#172033] ${member.id === hostMemberId ? "bg-[#ff3b1f]" : "bg-[#8b5cf6]"}`}>
+                <MemberAvatar member={member} sizeClass="h-full w-full" />
               </div>
               <div className="min-w-0 flex-1">
                 <div className="flex flex-wrap items-center gap-1.5">
@@ -817,7 +856,14 @@ function LiveMap({
       const marker = new google.maps.Marker({
         map,
         position: { lat: member.latitude, lng: member.longitude },
-        label: member.name.slice(0, 1).toUpperCase(),
+        label: member.avatarUrl ? undefined : member.name.slice(0, 1).toUpperCase(),
+        icon: member.avatarUrl
+          ? {
+              url: member.avatarUrl,
+              scaledSize: new google.maps.Size(42, 42),
+              anchor: new google.maps.Point(21, 21),
+            }
+          : undefined,
         title: member.name,
       });
       overlays.current.push(marker);
@@ -913,8 +959,14 @@ interface JoinDraft {
   memberName: string;
   latitude: number;
   longitude: number;
+  avatarUrl?: string | null;
   transportMode: TransportMode;
   mobilityRole: MemberMobilityRole;
+}
+
+interface AuthUserDraft {
+  name: string;
+  image: string | null;
 }
 
 function JoinRoomModal({
@@ -925,6 +977,8 @@ function JoinRoomModal({
   onJoin,
   onClose,
   onRequestLocation,
+  authStatus,
+  authUser,
 }: {
   isOpen: boolean;
   location: { latitude: number; longitude: number } | null;
@@ -933,12 +987,20 @@ function JoinRoomModal({
   onJoin: (draft: JoinDraft) => Promise<void>;
   onClose: () => void;
   onRequestLocation: () => void;
+  authStatus: "authenticated" | "loading" | "unauthenticated";
+  authUser: AuthUserDraft;
 }) {
   const [memberName, setMemberName] = useState("");
   const [mobilityRole, setMobilityRole] = useState<MemberMobilityRole>(MemberMobilityRole.NeedsPickup);
   const [transportMode, setTransportMode] = useState<TransportMode>(TransportMode.Motorbike);
   const [error, setError] = useState<string | null>(null);
   const [isSubmitting, setIsSubmitting] = useState(false);
+
+  useEffect(() => {
+    if (isOpen && authUser.name && memberName.trim().length === 0) {
+      setMemberName(authUser.name);
+    }
+  }, [authUser.name, isOpen, memberName]);
 
   if (!isOpen) return null;
 
@@ -960,6 +1022,7 @@ function JoinRoomModal({
         memberName: memberName.trim(),
         latitude: location.latitude,
         longitude: location.longitude,
+        avatarUrl: authUser.image,
         mobilityRole,
         transportMode: mobilityRole === MemberMobilityRole.NeedsPickup ? TransportMode.Walking : transportMode,
       });
@@ -980,6 +1043,24 @@ function JoinRoomModal({
           </div>
           <button type="button" className="bego-secondary" onClick={onClose}>Close</button>
         </div>
+        {authStatus !== "authenticated" && (
+          <div className="mt-5 rounded-2xl border-2 border-[#172033] bg-[#fff7dc] p-4">
+            <p className="font-black">Google sign-in required</p>
+            <p className="mt-1 text-sm font-bold text-[#64748b]">Your Google profile photo will be used as your map avatar.</p>
+            <button type="button" className="bego-primary mt-3" onClick={() => void signIn("google")} disabled={authStatus === "loading"}>
+              {authStatus === "loading" ? "Checking..." : "Sign in with Google"}
+            </button>
+          </div>
+        )}
+        {authStatus === "authenticated" && (
+          <div className="mt-5 flex items-center gap-3 rounded-2xl border-2 border-[#172033] bg-[#f6fcff] p-3">
+            <ProfileAvatar name={authUser.name} image={authUser.image} sizeClass="h-12 w-12" />
+            <div className="min-w-0">
+              <p className="truncate font-black">{authUser.name || "Google user"}</p>
+              <p className="text-xs font-bold text-[#64748b]">Google avatar active</p>
+            </div>
+          </div>
+        )}
         <label className="mt-5 grid gap-2 font-black">
           Your name
           <input className="bego-input" value={memberName} onChange={(event) => setMemberName(event.target.value)} autoFocus />
@@ -1007,7 +1088,7 @@ function JoinRoomModal({
           <button type="button" className="bego-secondary mt-3" onClick={onRequestLocation} disabled={locationLoading}>Get location</button>
         </div>
         {error && <p className="mt-3 rounded-xl bg-[#fff1f2] p-3 font-bold text-[#b42318]">{error}</p>}
-        <button type="submit" className="bego-primary mt-5 w-full" disabled={isSubmitting || !location}>
+        <button type="submit" className="bego-primary mt-5 w-full" disabled={isSubmitting || !location || authStatus !== "authenticated"}>
           {isSubmitting ? "Joining room..." : "Join room"}
         </button>
       </form>

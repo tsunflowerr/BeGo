@@ -29,6 +29,7 @@ public class MemberDto
     public string Name { get; init; } = string.Empty;
     public double Latitude { get; init; }
     public double Longitude { get; init; }
+    public string? AvatarUrl { get; init; }
     public TransportMode TransportMode { get; init; }
     public MemberMobilityRole MobilityRole { get; init; }
     public Guid? DriverId { get; init; }

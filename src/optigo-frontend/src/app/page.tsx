@@ -1,8 +1,11 @@
 "use client";
 
+/* eslint-disable @next/next/no-img-element */
+
 import Link from "next/link";
 import { useRouter } from "next/navigation";
-import { FormEvent, useCallback, useMemo, useState } from "react";
+import { FormEvent, useCallback, useEffect, useMemo, useState } from "react";
+import { signIn, signOut, useSession as useAuthSession } from "next-auth/react";
 import { useGeolocation } from "@/hooks";
 import { api } from "@/lib/api";
 import { MemberMobilityRole, TransportMode, transportModeLabels } from "@/types";
@@ -25,6 +28,7 @@ const transportModes = [
 
 export default function Home() {
   const router = useRouter();
+  const auth = useAuthSession();
   const [isOpen, setIsOpen] = useState(false);
   const {
     latitude,
@@ -62,6 +66,18 @@ export default function Home() {
             <Link className="bego-secondary inline-flex items-center" href="/benchmark">
               Benchmark
             </Link>
+            {auth.status === "authenticated" ? (
+              <button type="button" className="bego-secondary inline-flex items-center gap-2" onClick={() => void signOut()}>
+                {auth.data.user?.image && (
+                  <img src={auth.data.user.image} alt="" className="h-6 w-6 rounded-full border-2 border-[#172033]" referrerPolicy="no-referrer" />
+                )}
+                Sign out
+              </button>
+            ) : (
+              <button type="button" className="bego-secondary" onClick={() => void signIn("google")}>
+                Sign in with Google
+              </button>
+            )}
             <button type="button" className="bego-primary" onClick={() => setIsOpen(true)}>
               Create room
             </button>
@@ -140,6 +156,11 @@ export default function Home() {
         onRequestLocation={refresh}
         onClose={() => setIsOpen(false)}
         onCreate={handleCreate}
+        authStatus={auth.status}
+        authUser={{
+          name: auth.data?.user?.name ?? "",
+          image: auth.data?.user?.image ?? null,
+        }}
       />
     </main>
   );
@@ -150,8 +171,14 @@ interface CreateRoomDraft {
   defaultQuery: string;
   latitude: number;
   longitude: number;
+  avatarUrl?: string | null;
   transportMode: TransportMode;
   mobilityRole: MemberMobilityRole;
+}
+
+interface AuthUserDraft {
+  name: string;
+  image: string | null;
 }
 
 function CreateRoomModal({
@@ -162,6 +189,8 @@ function CreateRoomModal({
   onRequestLocation,
   onClose,
   onCreate,
+  authStatus,
+  authUser,
 }: {
   isOpen: boolean;
   location: { latitude: number; longitude: number } | null;
@@ -170,6 +199,8 @@ function CreateRoomModal({
   onRequestLocation: () => void;
   onClose: () => void;
   onCreate: (draft: CreateRoomDraft) => Promise<void>;
+  authStatus: "authenticated" | "loading" | "unauthenticated";
+  authUser: AuthUserDraft;
 }) {
   const [hostName, setHostName] = useState("");
   const [defaultQuery, setDefaultQuery] = useState("quiet cafe with wifi");
@@ -177,6 +208,12 @@ function CreateRoomModal({
   const [transportMode, setTransportMode] = useState<TransportMode>(TransportMode.Motorbike);
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [error, setError] = useState<string | null>(null);
+
+  useEffect(() => {
+    if (isOpen && authUser.name && hostName.trim().length === 0) {
+      setHostName(authUser.name);
+    }
+  }, [authUser.name, hostName, isOpen]);
 
   if (!isOpen) {
     return null;
@@ -206,6 +243,7 @@ function CreateRoomModal({
         defaultQuery: cleanQuery,
         latitude: location.latitude,
         longitude: location.longitude,
+        avatarUrl: authUser.image,
         transportMode: mobilityRole === MemberMobilityRole.NeedsPickup ? TransportMode.Walking : transportMode,
         mobilityRole,
       });
@@ -228,6 +266,26 @@ function CreateRoomModal({
             Close
           </button>
         </div>
+
+        {authStatus !== "authenticated" && (
+          <div className="mt-5 rounded-2xl border-2 border-[#172033] bg-[#fff7dc] p-4">
+            <p className="font-black">Google sign-in required</p>
+            <p className="mt-1 text-sm font-bold text-[#64748b]">Your Google profile photo will be used as your map avatar.</p>
+            <button type="button" className="bego-primary mt-3" onClick={() => void signIn("google")} disabled={authStatus === "loading"}>
+              {authStatus === "loading" ? "Checking..." : "Sign in with Google"}
+            </button>
+          </div>
+        )}
+
+        {authStatus === "authenticated" && (
+          <div className="mt-5 flex items-center gap-3 rounded-2xl border-2 border-[#172033] bg-[#f6fcff] p-3">
+            <ProfileAvatar name={authUser.name} image={authUser.image} sizeClass="h-12 w-12" />
+            <div className="min-w-0">
+              <p className="truncate font-black">{authUser.name || "Google user"}</p>
+              <p className="text-xs font-bold text-[#64748b]">Google avatar active</p>
+            </div>
+          </div>
+        )}
 
         <div className="mt-5 grid gap-4 sm:grid-cols-2">
           <label className="grid gap-2 font-bold">
@@ -294,10 +352,22 @@ function CreateRoomModal({
 
         {error && <div className="mt-4 rounded-2xl border-2 border-[#d42712] bg-[#fff1f2] p-3 font-bold text-[#b42318]">{error}</div>}
 
-        <button type="submit" className="bego-primary mt-5 w-full" disabled={isSubmitting}>
+        <button type="submit" className="bego-primary mt-5 w-full" disabled={isSubmitting || authStatus !== "authenticated"}>
           {isSubmitting ? "Creating room..." : "Create room and enter coordination"}
         </button>
       </form>
     </div>
+  );
+}
+
+function ProfileAvatar({ name, image, sizeClass }: { name: string; image?: string | null; sizeClass: string }) {
+  if (image) {
+    return <img src={image} alt="" className={`${sizeClass} rounded-full border-2 border-[#172033] object-cover shadow-[3px_3px_0_#172033]`} referrerPolicy="no-referrer" />;
+  }
+
+  return (
+    <span className={`${sizeClass} grid place-items-center rounded-full border-2 border-[#172033] bg-[#f7c948] font-black shadow-[3px_3px_0_#172033]`}>
+      {(name || "U").slice(0, 1).toUpperCase()}
+    </span>
   );
 }

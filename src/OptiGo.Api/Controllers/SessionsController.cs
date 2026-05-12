@@ -42,7 +42,8 @@ public class SessionsController : ControllerBase
             request.Latitude,
             request.Longitude,
             request.TransportMode,
-            request.MobilityRole);
+            request.MobilityRole,
+            request.AvatarUrl);
 
         var memberId = await _mediator.Send(command);
         return Ok(new { MemberId = memberId });
@@ -104,6 +105,7 @@ public class JoinSessionRequest
     public string MemberName { get; set; } = string.Empty;
     public double Latitude { get; set; }
     public double Longitude { get; set; }
+    public string? AvatarUrl { get; set; }
     public Domain.Enums.TransportMode TransportMode { get; set; }
     public Domain.Enums.MemberMobilityRole MobilityRole { get; set; } = Domain.Enums.MemberMobilityRole.SelfTravel;
 }

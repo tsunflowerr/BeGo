@@ -40,6 +40,7 @@ public class GetSessionQueryHandler : IRequestHandler<GetSessionQuery, SessionDt
                 Name = m.Name,
                 Latitude = m.Latitude,
                 Longitude = m.Longitude,
+                AvatarUrl = m.AvatarUrl,
                 TransportMode = m.TransportMode,
                 MobilityRole = m.MobilityRole,
                 DriverId = m.DriverId,

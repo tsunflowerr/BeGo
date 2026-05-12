@@ -35,6 +35,7 @@ export interface Member {
   name: string;
   latitude: number;
   longitude: number;
+  avatarUrl?: string | null;
   transportMode: TransportMode;
   mobilityRole: MemberMobilityRole;
   driverId?: string | null;
@@ -230,6 +231,7 @@ export interface MemberJoinedEvent {
   memberName: string;
   latitude: number;
   longitude: number;
+  avatarUrl?: string | null;
   transportMode: TransportMode;
   mobilityRole: MemberMobilityRole;
   joinedAt: string;

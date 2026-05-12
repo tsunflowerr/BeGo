@@ -123,6 +123,7 @@ export function useSession({ sessionId, memberId }: UseSessionOptions): UseSessi
         name: event.memberName,
         latitude: event.latitude,
         longitude: event.longitude,
+        avatarUrl: event.avatarUrl,
         transportMode: event.transportMode,
         mobilityRole: event.mobilityRole,
         joinedAt: event.joinedAt,

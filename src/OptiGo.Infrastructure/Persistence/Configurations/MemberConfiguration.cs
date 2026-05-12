@@ -35,6 +35,10 @@ public class MemberConfiguration : IEntityTypeConfiguration<Member>
             .HasColumnType("decimal(10,7)")
             .IsRequired();
 
+        builder.Property(m => m.AvatarUrl)
+            .HasColumnName("avatar_url")
+            .HasMaxLength(2048);
+
         builder.Property(m => m.TransportMode)
             .HasColumnName("transport_mode")
             .HasConversion<string>()

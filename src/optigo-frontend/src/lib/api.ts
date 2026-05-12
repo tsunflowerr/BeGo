@@ -14,6 +14,7 @@ interface CreateSessionRequest {
   hostName: string;
   latitude: number;
   longitude: number;
+  avatarUrl?: string | null;
   transportMode: TransportMode;
   mobilityRole?: MemberMobilityRole;
   defaultQuery?: string;
@@ -28,6 +29,7 @@ interface JoinSessionRequest {
   memberName: string;
   latitude: number;
   longitude: number;
+  avatarUrl?: string | null;
   transportMode: TransportMode;
   mobilityRole?: MemberMobilityRole;
 }

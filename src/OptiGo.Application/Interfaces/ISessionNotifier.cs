@@ -9,6 +9,7 @@ public interface ISessionNotifier
         string memberName,
         double latitude,
         double longitude,
+        string? avatarUrl,
         Domain.Enums.TransportMode transportMode,
         Domain.Enums.MemberMobilityRole mobilityRole,
         DateTime joinedAt,

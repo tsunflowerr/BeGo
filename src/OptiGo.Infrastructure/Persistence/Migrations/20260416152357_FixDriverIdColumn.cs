@@ -10,19 +10,45 @@ namespace OptiGo.Infrastructure.Persistence.Migrations
         /// <inheritdoc />
         protected override void Up(MigrationBuilder migrationBuilder)
         {
-            migrationBuilder.RenameColumn(
-                name: "DriverId",
-                table: "members",
-                newName: "driver_id");
+            migrationBuilder.Sql("""
+                DO $$
+                BEGIN
+                    IF EXISTS (
+                        SELECT 1
+                        FROM information_schema.columns
+                        WHERE table_name = 'members' AND column_name = 'DriverId'
+                    )
+                    AND NOT EXISTS (
+                        SELECT 1
+                        FROM information_schema.columns
+                        WHERE table_name = 'members' AND column_name = 'driver_id'
+                    ) THEN
+                        ALTER TABLE members RENAME COLUMN "DriverId" TO driver_id;
+                    END IF;
+                END $$;
+                """);
         }
 
         /// <inheritdoc />
         protected override void Down(MigrationBuilder migrationBuilder)
         {
-            migrationBuilder.RenameColumn(
-                name: "driver_id",
-                table: "members",
-                newName: "DriverId");
+            migrationBuilder.Sql("""
+                DO $$
+                BEGIN
+                    IF EXISTS (
+                        SELECT 1
+                        FROM information_schema.columns
+                        WHERE table_name = 'members' AND column_name = 'driver_id'
+                    )
+                    AND NOT EXISTS (
+                        SELECT 1
+                        FROM information_schema.columns
+                        WHERE table_name = 'members' AND column_name = 'DriverId'
+                    ) THEN
+                        ALTER TABLE members RENAME COLUMN driver_id TO "DriverId";
+                    END IF;
+                END $$;
+                """);
         }
     }
 }

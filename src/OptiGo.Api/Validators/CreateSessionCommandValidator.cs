@@ -35,5 +35,18 @@ public class CreateSessionCommandValidator : AbstractValidator<CreateSessionComm
             .MaximumLength(500)
             .WithMessage("Yêu cầu tìm kiếm không được vượt quá 500 ký tự")
             .When(x => !string.IsNullOrEmpty(x.DefaultQuery));
+
+        RuleFor(x => x.AvatarUrl)
+            .MaximumLength(2048)
+            .WithMessage("Avatar URL không được vượt quá 2048 ký tự")
+            .Must(BeValidHttpUrl)
+            .WithMessage("Avatar URL phải là URL http/https hợp lệ")
+            .When(x => !string.IsNullOrWhiteSpace(x.AvatarUrl));
+    }
+
+    private static bool BeValidHttpUrl(string? value)
+    {
+        return Uri.TryCreate(value, UriKind.Absolute, out var uri) &&
+            (uri.Scheme == Uri.UriSchemeHttp || uri.Scheme == Uri.UriSchemeHttps);
     }
 }
