@@ -239,6 +239,14 @@ export interface MemberJoinedEvent {
   totalMembers: number;
 }
 
+export interface MemberLeftEvent {
+  sessionId: string;
+  memberId: string;
+  memberName: string;
+  isHost: boolean;
+  timestamp: string;
+}
+
 export interface ComputingStartedEvent {
   sessionId: string;
   message: string;

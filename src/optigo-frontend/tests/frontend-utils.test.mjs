@@ -35,7 +35,7 @@ test("benchmark helpers normalize values", () => {
   assert.equal(signedGapPercent(-4.51), "-4.5%");
 });
 
-test("local test tools are exposed only for host on local development", () => {
+test("local test tools are exposed only for host on localhost", () => {
   assert.equal(
     canShowLocalTestTools({
       nodeEnv: "development",
@@ -50,6 +50,16 @@ test("local test tools are exposed only for host on local development", () => {
     canShowLocalTestTools({
       nodeEnv: "production",
       hostname: "localhost",
+      hasJoined: true,
+      isHost: true,
+      status: "WaitingForMembers",
+    }),
+    true
+  );
+  assert.equal(
+    canShowLocalTestTools({
+      nodeEnv: "development",
+      hostname: "example.com",
       hasJoined: true,
       isHost: true,
       status: "WaitingForMembers",

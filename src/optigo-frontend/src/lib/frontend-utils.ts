@@ -108,7 +108,6 @@ export function canShowLocalTestTools(options: {
 }): boolean {
   const isLocalhost = options.hostname === "localhost" || options.hostname === "127.0.0.1";
   return (
-    options.nodeEnv === "development" &&
     isLocalhost &&
     options.hasJoined &&
     options.isHost &&

@@ -84,6 +84,8 @@ export default function RoomPage() {
     isRoutePreview,
     isCompleted,
     isConnected,
+    memberLeaveNotice,
+    notifyMemberLeft,
     refreshSession,
     startOptimization,
     submitVote,
@@ -139,12 +141,26 @@ export default function RoomPage() {
     status,
   });
 
-  const switchRoomUser = useCallback(() => {
+  const leaveRoomAndSignOut = useCallback(async () => {
+    const leavingMember = currentMember;
+    if (leavingMember) {
+      try {
+        await notifyMemberLeft({
+          memberId: leavingMember.id,
+          memberName: leavingMember.name,
+          isHost,
+        });
+      } catch {
+        toast.push("Could not notify the room before signing out");
+      }
+    }
+
     window.localStorage.removeItem(`room-${sessionId}-memberId`);
     setMemberId(null);
     setHasJoined(false);
     setShowJoin(true);
-  }, [sessionId]);
+    await signOutGoogle({ redirect: false });
+  }, [currentMember, isHost, notifyMemberLeft, sessionId, toast]);
 
   const joinRoom = useCallback(
     async (payload: JoinDraft) => {
@@ -171,19 +187,6 @@ export default function RoomPage() {
       toast.push("Vote submitted");
     },
     [submitVote, toast]
-  );
-
-  const impersonate = useCallback(
-    (nextMemberId: string) => {
-      const nextMember = members.find((member) => member.id === nextMemberId);
-      const existingVote = session?.votes?.find((vote) => vote.memberId === nextMemberId);
-      setMemberId(nextMemberId);
-      setHasJoined(true);
-      setSelectedVenueId(existingVote?.venueId ?? null);
-      window.localStorage.setItem(`room-${sessionId}-memberId`, nextMemberId);
-      toast.push(`Dev impersonating ${nextMember?.name ?? "member"}`);
-    },
-    [members, session?.votes, sessionId, toast]
   );
 
   if (loading) {
@@ -213,7 +216,7 @@ export default function RoomPage() {
             <Link className="bego-secondary inline-flex items-center" href="/benchmark">Benchmark</Link>
             {currentMember && <span className="bego-chip bg-white">You: {currentMember.name}</span>}
             {auth.status === "authenticated" ? (
-              <button type="button" className="bego-secondary inline-flex items-center gap-2" onClick={() => void signOutGoogle()}>
+              <button type="button" className="bego-secondary inline-flex items-center gap-2" onClick={() => void leaveRoomAndSignOut()}>
                 {auth.data.user?.image && (
                   <img src={auth.data.user.image} alt="" className="h-6 w-6 rounded-full border-2 border-[#172033]" referrerPolicy="no-referrer" />
                 )}
@@ -222,9 +225,20 @@ export default function RoomPage() {
             ) : (
               <button type="button" className="bego-secondary" onClick={() => void signIn("google")}>Sign in with Google</button>
             )}
-            <button type="button" className="bego-secondary" onClick={switchRoomUser}>Switch room user</button>
           </div>
         </header>
+
+        {memberLeaveNotice?.isHost && memberLeaveNotice.memberId !== memberId && (
+          <div className="rounded-2xl border-2 border-[#172033] bg-[#fff7dc] p-4 font-bold shadow-[4px_4px_0_#d8e3ea]">
+            Host {memberLeaveNotice.memberName} signed out. They can rejoin only from this room link.
+          </div>
+        )}
+
+        {memberLeaveNotice && !memberLeaveNotice.isHost && memberLeaveNotice.memberId !== memberId && (
+          <div className="rounded-2xl border-2 border-[#172033] bg-[#f6fcff] p-4 font-bold shadow-[4px_4px_0_#d8e3ea]">
+            {memberLeaveNotice.memberName} signed out of this room.
+          </div>
+        )}
 
         {error && <div className="rounded-2xl border-2 border-[#d42712] bg-[#fff1f2] p-3 font-bold text-[#b42318]">{error}</div>}
 
@@ -286,8 +300,6 @@ export default function RoomPage() {
               hostMemberId={session?.members?.[0]?.id}
               currentMemberId={memberId ?? undefined}
               routeVenue={routeVenue}
-              isSelectable={hostname === "localhost" && isVoting}
-              onSelect={impersonate}
             />
             <PickupPanel
               members={members}
@@ -496,15 +508,11 @@ function MembersPanel({
   hostMemberId,
   currentMemberId,
   routeVenue,
-  isSelectable,
-  onSelect,
 }: {
   members: Member[];
   hostMemberId?: string;
   currentMemberId?: string;
   routeVenue: Venue | null;
-  isSelectable: boolean;
-  onSelect: (memberId: string) => void;
 }) {
   const routeByMember = useMemo(
     () => new Map(routeVenue?.memberRoutes.map((route) => [route.memberId, route]) ?? []),
@@ -551,15 +559,11 @@ function MembersPanel({
             </>
           );
 
-          return isSelectable ? (
-            <button key={member.id} type="button" className={`flex w-full items-center gap-3 rounded-2xl border-2 border-[#172033] p-3 text-left ${isCurrent ? "bg-[#fff7dc]" : "bg-white"}`} onClick={() => onSelect(member.id)}>
-              {body}
-            </button>
-          ) : (
-            <div key={member.id} className={`flex items-center gap-3 rounded-2xl border-2 border-[#172033] p-3 ${isCurrent ? "bg-[#fff7dc]" : "bg-white"}`}>
-              {body}
-            </div>
-          );
+          return (
+          <div key={member.id} className={`flex items-center gap-3 rounded-2xl border-2 border-[#172033] p-3 ${isCurrent ? "bg-[#fff7dc]" : "bg-white"}`}>
+            {body}
+          </div>
+        );
         })}
       </div>
     </section>
@@ -648,35 +652,45 @@ function VotingSection({
   votingProgress: { total: number; voted: number };
   onVote: (venueId: string) => Promise<void>;
 }) {
+  const [detailVenue, setDetailVenue] = useState<Venue | null>(null);
   const progress = votingProgress.total > 0 ? Math.round((votingProgress.voted / votingProgress.total) * 100) : 0;
 
   return (
-    <section className="bego-hard-card bg-white p-5">
-      <div className="flex flex-col gap-3 md:flex-row md:items-end md:justify-between">
-        <div>
-          <span className="bego-chip bg-[#f472b6]">Vote</span>
-          <h2 className="mt-3 text-3xl font-black">Choose meeting point</h2>
-        </div>
-        <div className="w-full rounded-full border-2 border-[#172033] bg-white p-1 md:w-64">
-          <div className="h-5 rounded-full bg-[#45d483] text-right text-xs font-black leading-5" style={{ width: `${progress}%`, minWidth: progress > 0 ? 32 : 0 }}>
-            {votingProgress.voted}/{votingProgress.total}
+    <>
+      <section className="bego-hard-card bg-white p-5">
+        <div className="flex flex-col gap-3 md:flex-row md:items-end md:justify-between">
+          <div>
+            <span className="bego-chip bg-[#f472b6]">Vote</span>
+            <h2 className="mt-3 text-3xl font-black">Choose meeting point</h2>
+          </div>
+          <div className="w-full rounded-full border-2 border-[#172033] bg-white p-1 md:w-64">
+            <div className="h-5 rounded-full bg-[#45d483] text-right text-xs font-black leading-5" style={{ width: `${progress}%`, minWidth: progress > 0 ? 32 : 0 }}>
+              {votingProgress.voted}/{votingProgress.total}
+            </div>
           </div>
         </div>
-      </div>
-      <div className="mt-5 grid gap-4 lg:grid-cols-3">
-        {venues.map((venue, index) => (
-          <VenueChoiceCard
-            key={venue.venueId}
-            venue={venue}
-            rank={index + 1}
-            selected={selectedVenueId === venue.venueId}
-            disabled={hasVoted}
-            currentMemberId={currentMemberId}
-            onVote={onVote}
-          />
-        ))}
-      </div>
-    </section>
+        <div className="mt-5 grid gap-4 lg:grid-cols-3">
+          {venues.map((venue, index) => (
+            <VenueChoiceCard
+              key={venue.venueId}
+              venue={venue}
+              rank={index + 1}
+              selected={selectedVenueId === venue.venueId}
+              disabled={hasVoted}
+              currentMemberId={currentMemberId}
+              onVote={onVote}
+              onDetails={() => setDetailVenue(venue)}
+            />
+          ))}
+        </div>
+      </section>
+
+      <VenueDetailsModal
+        venue={detailVenue}
+        currentMemberId={currentMemberId}
+        onClose={() => setDetailVenue(null)}
+      />
+    </>
   );
 }
 
@@ -687,6 +701,7 @@ function VenueChoiceCard({
   disabled,
   currentMemberId,
   onVote,
+  onDetails,
 }: {
   venue: Venue;
   rank: number;
@@ -694,8 +709,8 @@ function VenueChoiceCard({
   disabled: boolean;
   currentMemberId?: string;
   onVote: (venueId: string) => Promise<void>;
+  onDetails: () => void;
 }) {
-  const [open, setOpen] = useState(false);
   const myRoute = currentMemberId ? venue.memberRoutes.find((route) => route.memberId === currentMemberId) : venue.memberRoutes[0];
 
   return (
@@ -727,26 +742,152 @@ function VenueChoiceCard({
           <button type="button" className="bego-primary flex-1" disabled={disabled} onClick={() => void onVote(venue.venueId)}>
             {selected ? "Selected" : disabled ? "Voted" : "Vote"}
           </button>
-          <button type="button" className="bego-secondary" onClick={() => setOpen((value) => !value)}>
-            {open ? "Hide" : "Details"}
+          <button type="button" className="bego-secondary" onClick={onDetails}>
+            Details
           </button>
         </div>
-        {open && (
-          <div className="mt-4 grid gap-3 border-t-2 border-[#172033] pt-4">
-            {venue.tradeOffSummary && <p className="rounded-xl bg-[#fff7dc] p-3 text-sm font-bold">{venue.tradeOffSummary}</p>}
-            {venue.aiReviewSummary && <p className="rounded-xl bg-[#f6fcff] p-3 text-sm font-bold">{venue.aiReviewSummary}</p>}
-            <div className="grid gap-2 text-sm font-semibold">
-              {venue.memberRoutes.map((route) => (
-                <div key={route.memberId} className="flex justify-between gap-3 rounded-xl bg-[#f8fafc] p-2">
-                  <span>{route.memberName}</span>
-                  <span>{formatDuration(route.estimatedTimeSeconds)} - {formatDistance(route.distanceMeters)}</span>
-                </div>
-              ))}
-            </div>
-          </div>
-        )}
       </div>
     </article>
+  );
+}
+
+function VenueDetailsModal({
+  venue,
+  currentMemberId,
+  onClose,
+}: {
+  venue: Venue | null;
+  currentMemberId?: string;
+  onClose: () => void;
+}) {
+  useEffect(() => {
+    if (!venue) return;
+
+    function handleKeyDown(event: KeyboardEvent) {
+      if (event.key === "Escape") {
+        onClose();
+      }
+    }
+
+    window.addEventListener("keydown", handleKeyDown);
+    return () => window.removeEventListener("keydown", handleKeyDown);
+  }, [onClose, venue]);
+
+  if (!venue) return null;
+
+  const myRoute = currentMemberId ? venue.memberRoutes.find((route) => route.memberId === currentMemberId) : null;
+  const photos = venue.photoUrls?.slice(0, 4) ?? [];
+  const price = typeof venue.priceLevel === "number" && venue.priceLevel > 0 ? "$".repeat(Math.min(4, venue.priceLevel)) : "Not listed";
+
+  return (
+    <div
+      className="fixed inset-0 z-[70] grid place-items-center bg-[#172033]/65 p-4 backdrop-blur-sm"
+      onMouseDown={(event) => event.target === event.currentTarget && onClose()}
+    >
+      <section className="bego-hard-card flex max-h-[88vh] w-full max-w-6xl flex-col overflow-hidden bg-white md:w-[72vw]">
+        <div className="flex items-start justify-between gap-4 border-b-2 border-[#172033] p-4 sm:p-5">
+          <div className="min-w-0">
+            <span className="bego-chip bg-[#f7c948]">{venue.category || "Venue"}</span>
+            <h2 className="mt-3 text-3xl font-black leading-tight">{venue.name}</h2>
+            <p className="mt-2 text-sm font-bold text-[#64748b]">{venue.address}</p>
+          </div>
+          <button type="button" className="bego-secondary shrink-0" onClick={onClose}>Close</button>
+        </div>
+
+        <div className="bego-scrollbar grid gap-5 overflow-y-auto p-4 sm:p-5 xl:grid-cols-[1.05fr_0.95fr]">
+          <div className="grid content-start gap-4">
+            <div className="overflow-hidden rounded-2xl border-2 border-[#172033] bg-[#d8e3ea]">
+              {photos[0] ? (
+                <div
+                  role="img"
+                  aria-label={venue.name}
+                  className="h-[300px] bg-cover bg-center"
+                  style={{ backgroundImage: `url("${photos[0]}")` }}
+                />
+              ) : (
+                <div className="grid h-[300px] place-items-center font-black text-[#64748b]">No venue photo</div>
+              )}
+            </div>
+
+            {photos.length > 1 && (
+              <div className="grid grid-cols-3 gap-3">
+                {photos.slice(1).map((photo) => (
+                  <div
+                    key={photo}
+                    role="img"
+                    aria-label={venue.name}
+                    className="h-24 rounded-xl border-2 border-[#172033] bg-cover bg-center"
+                    style={{ backgroundImage: `url("${photo}")` }}
+                  />
+                ))}
+              </div>
+            )}
+
+            <div className="grid grid-cols-2 gap-3 sm:grid-cols-4">
+              <MetricBox label="Rating" value={`${venue.rating.toFixed(1)} (${venue.reviewCount})`} tone="bg-[#f7c948]" />
+              <MetricBox label="Price" value={price} tone="bg-[#fff7dc]" />
+              <MetricBox label="Total time" value={formatCompactDuration(venue.totalTimeSeconds)} tone="bg-[#48c7df]" />
+              <MetricBox label="Walk" value={formatCompactDistance(venue.totalWalkingDistanceMeters)} tone="bg-[#45d483]" />
+            </div>
+
+            {venue.tradeOffSummary && (
+              <section className="rounded-2xl border-2 border-[#172033] bg-[#fff7dc] p-4">
+                <h3 className="font-black">Route tradeoff</h3>
+                <p className="mt-2 text-sm font-bold text-[#475569]">{venue.tradeOffSummary}</p>
+              </section>
+            )}
+          </div>
+
+          <div className="grid content-start gap-4">
+            {venue.aiReviewSummary && (
+              <section className="rounded-2xl border-2 border-[#172033] bg-[#f6fcff] p-4">
+                <h3 className="font-black">AI review summary</h3>
+                <p className="mt-2 text-sm font-bold text-[#475569]">{venue.aiReviewSummary}</p>
+              </section>
+            )}
+
+            {venue.optimizationReason && (
+              <section className="rounded-2xl border-2 border-[#172033] bg-white p-4">
+                <h3 className="font-black">Why this place</h3>
+                <p className="mt-2 text-sm font-bold text-[#475569]">{venue.optimizationReason}</p>
+              </section>
+            )}
+
+            <section className="rounded-2xl border-2 border-[#172033] bg-white p-4">
+              <div className="flex flex-wrap items-center justify-between gap-3">
+                <h3 className="font-black">Travel by member</h3>
+                {myRoute && <span className="bego-chip bg-[#45d483]">You {formatDuration(myRoute.estimatedTimeSeconds)}</span>}
+              </div>
+              <div className="mt-3 grid gap-2 text-sm font-semibold">
+                {venue.memberRoutes.map((route) => (
+                  <div key={route.memberId} className="flex flex-wrap justify-between gap-3 rounded-xl bg-[#f8fafc] p-3">
+                    <span className="font-black">{route.memberName}</span>
+                    <span>{formatDuration(route.estimatedTimeSeconds)} - {formatDistance(route.distanceMeters)}</span>
+                  </div>
+                ))}
+              </div>
+            </section>
+
+            <section className="rounded-2xl border-2 border-[#172033] bg-white p-4">
+              <h3 className="font-black">Recent reviews</h3>
+              <div className="mt-3 grid gap-3">
+                {venue.topReviews?.length ? venue.topReviews.slice(0, 3).map((review) => (
+                  <article key={`${review.authorName}-${review.relativeTime}`} className="rounded-xl bg-[#fffdf5] p-3">
+                    <div className="flex flex-wrap items-center justify-between gap-2">
+                      <p className="font-black">{review.authorName}</p>
+                      <span className="text-xs font-black text-[#64748b]">{review.rating.toFixed(1)} - {review.relativeTime}</span>
+                    </div>
+                    <p className="mt-2 text-sm font-semibold text-[#475569]">{review.text}</p>
+                  </article>
+                )) : (
+                  <p className="text-sm font-bold text-[#64748b]">No review excerpts available.</p>
+                )}
+              </div>
+            </section>
+          </div>
+        </div>
+      </section>
+    </div>
   );
 }
 
@@ -820,7 +961,7 @@ function LiveMap({
 }) {
   const mapRef = useRef<HTMLDivElement>(null);
   const mapInstance = useRef<google.maps.Map | null>(null);
-  const overlays = useRef<Array<google.maps.Marker | google.maps.Polyline>>([]);
+  const overlays = useRef<MapOverlay[]>([]);
   const [loadError, setLoadError] = useState<string | null>(null);
   const hasKey = Boolean(process.env.NEXT_PUBLIC_GOOGLE_MAPS_API_KEY);
 
@@ -853,17 +994,17 @@ function LiveMap({
     const bounds = new google.maps.LatLngBounds();
 
     members.forEach((member) => {
+      if (member.avatarUrl) {
+        const marker = createAvatarMapMarker(map, member);
+        overlays.current.push(marker);
+        bounds.extend({ lat: member.latitude, lng: member.longitude });
+        return;
+      }
+
       const marker = new google.maps.Marker({
         map,
         position: { lat: member.latitude, lng: member.longitude },
-        label: member.avatarUrl ? undefined : member.name.slice(0, 1).toUpperCase(),
-        icon: member.avatarUrl
-          ? {
-              url: member.avatarUrl,
-              scaledSize: new google.maps.Size(42, 42),
-              anchor: new google.maps.Point(21, 21),
-            }
-          : undefined,
+        label: member.name.slice(0, 1).toUpperCase(),
         title: member.name,
       });
       overlays.current.push(marker);
@@ -924,6 +1065,97 @@ function LiveMap({
       {isLoading && <div className="absolute inset-0 grid place-items-center bg-white/80 text-lg font-black">Optimizing...</div>}
     </div>
   );
+}
+
+type MapOverlay = {
+  setMap(map: google.maps.Map | null): void;
+};
+
+function createAvatarMapMarker(map: google.maps.Map, member: Member): google.maps.OverlayView {
+  const position = new google.maps.LatLng(member.latitude, member.longitude);
+
+  class AvatarMapMarker extends google.maps.OverlayView {
+    private element: HTMLDivElement | null = null;
+
+    onAdd() {
+      const element = document.createElement("div");
+      element.style.position = "absolute";
+      element.style.width = "34px";
+      element.style.height = "44px";
+      element.style.transform = "translate(-50%, -100%)";
+      element.style.pointerEvents = "auto";
+      element.style.zIndex = "30";
+      element.title = member.name;
+
+      const face = document.createElement("div");
+      face.style.position = "relative";
+      face.style.display = "grid";
+      face.style.placeItems = "center";
+      face.style.width = "32px";
+      face.style.height = "32px";
+      face.style.overflow = "hidden";
+      face.style.border = "2px solid #172033";
+      face.style.borderRadius = "9999px";
+      face.style.background = "#ff6a00";
+      face.style.boxShadow = "2px 2px 0 #172033";
+
+      const fallback = document.createElement("span");
+      fallback.textContent = member.name.slice(0, 1).toUpperCase();
+      fallback.style.color = "white";
+      fallback.style.fontSize = "14px";
+      fallback.style.fontWeight = "900";
+      fallback.style.lineHeight = "1";
+
+      const image = document.createElement("img");
+      image.src = member.avatarUrl ?? "";
+      image.alt = "";
+      image.referrerPolicy = "no-referrer";
+      image.style.position = "absolute";
+      image.style.inset = "0";
+      image.style.width = "100%";
+      image.style.height = "100%";
+      image.style.objectFit = "cover";
+      image.style.borderRadius = "9999px";
+      image.onerror = () => {
+        image.remove();
+      };
+
+      const pointer = document.createElement("div");
+      pointer.style.width = "0";
+      pointer.style.height = "0";
+      pointer.style.marginLeft = "10px";
+      pointer.style.marginTop = "-1px";
+      pointer.style.borderLeft = "7px solid transparent";
+      pointer.style.borderRight = "7px solid transparent";
+      pointer.style.borderTop = "11px solid #172033";
+
+      face.append(fallback, image);
+      element.append(face, pointer);
+      this.element = element;
+      this.getPanes()?.overlayMouseTarget.appendChild(element);
+    }
+
+    draw() {
+      const projection = this.getProjection();
+      const element = this.element;
+      if (!projection || !element) return;
+
+      const point = projection.fromLatLngToDivPixel(position);
+      if (!point) return;
+
+      element.style.left = `${point.x}px`;
+      element.style.top = `${point.y}px`;
+    }
+
+    onRemove() {
+      this.element?.remove();
+      this.element = null;
+    }
+  }
+
+  const marker = new AvatarMapMarker();
+  marker.setMap(map);
+  return marker;
 }
 
 function MapFallback({ members, venues, isLoading, error }: { members: Member[]; venues: Venue[]; isLoading: boolean; error: string }) {

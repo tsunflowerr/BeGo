@@ -42,6 +42,31 @@ public class SessionHub : Hub
             Context.ConnectionId, sessionId);
     }
 
+    public async Task NotifyMemberLeft(string sessionId, string memberId, string memberName, bool isHost)
+    {
+        if (!Guid.TryParse(sessionId, out _) || !Guid.TryParse(memberId, out _))
+        {
+            await Clients.Caller.SendAsync("Error", new
+            {
+                code = "INVALID_MEMBER_LEAVE",
+                message = "Thông tin thành viên rời phòng không hợp lệ."
+            });
+            return;
+        }
+
+        _logger.LogInformation("Member {MemberName} left session {SessionId}. IsHost={IsHost}",
+            memberName, sessionId, isHost);
+
+        await Clients.Group(GetGroupName(sessionId)).SendAsync("MemberLeft", new
+        {
+            sessionId,
+            memberId,
+            memberName,
+            isHost,
+            timestamp = DateTime.UtcNow
+        });
+    }
+
     public override Task OnConnectedAsync()
     {
         _logger.LogDebug("SignalR client connected: {ConnectionId}", Context.ConnectionId);

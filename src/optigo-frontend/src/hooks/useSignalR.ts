@@ -5,6 +5,7 @@ import * as signalR from "@microsoft/signalr";
 import { API_BASE_URL } from "@/lib/api";
 import {
   MemberJoinedEvent,
+  MemberLeftEvent,
   ComputingStartedEvent,
   OptimizationCompletedEvent,
   VoteSubmittedEvent,
@@ -19,6 +20,7 @@ type ConnectionState = "disconnected" | "connecting" | "connected" | "reconnecti
 interface UseSignalROptions {
   sessionId: string;
   onMemberJoined?: (event: MemberJoinedEvent) => void;
+  onMemberLeft?: (event: MemberLeftEvent) => void;
   onComputingStarted?: (event: ComputingStartedEvent) => void;
   onOptimizationCompleted?: (event: OptimizationCompletedEvent) => void;
   onVoteSubmitted?: (event: VoteSubmittedEvent) => void;
@@ -31,6 +33,7 @@ interface UseSignalROptions {
 export function useSignalR({
   sessionId,
   onMemberJoined,
+  onMemberLeft,
   onComputingStarted,
   onOptimizationCompleted,
   onVoteSubmitted,
@@ -62,6 +65,12 @@ export function useSignalR({
     connection.on("MemberJoined", (event: MemberJoinedEvent) => {
       if (mountedRef.current && onMemberJoined) {
         onMemberJoined(event);
+      }
+    });
+
+    connection.on("MemberLeft", (event: MemberLeftEvent) => {
+      if (mountedRef.current && onMemberLeft) {
+        onMemberLeft(event);
       }
     });
 
@@ -146,7 +155,20 @@ export function useSignalR({
         setConnectionState("disconnected");
       }
     }
-  }, [sessionId, onMemberJoined, onComputingStarted, onOptimizationCompleted, onVoteSubmitted, onVotingCompleted, onPickupRequestsUpdated, onDepartureLocked, onError]);
+  }, [sessionId, onMemberJoined, onMemberLeft, onComputingStarted, onOptimizationCompleted, onVoteSubmitted, onVotingCompleted, onPickupRequestsUpdated, onDepartureLocked, onError]);
+
+  const notifyMemberLeft = useCallback(async (payload: {
+    memberId: string;
+    memberName: string;
+    isHost: boolean;
+  }) => {
+    const connection = connectionRef.current;
+    if (!connection || connection.state !== signalR.HubConnectionState.Connected) {
+      return;
+    }
+
+    await connection.invoke("NotifyMemberLeft", sessionId, payload.memberId, payload.memberName, payload.isHost);
+  }, [sessionId]);
 
   const disconnect = useCallback(async () => {
     if (connectionRef.current) {
@@ -185,5 +207,6 @@ export function useSignalR({
     isConnected: connectionState === "connected",
     connect,
     disconnect,
+    notifyMemberLeft,
   };
 }

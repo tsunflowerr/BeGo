@@ -11,6 +11,7 @@ import {
   OptimizationResult,
   Venue,
   MemberJoinedEvent,
+  MemberLeftEvent,
   OptimizationCompletedEvent,
   VoteSubmittedEvent,
   VotingCompletedEvent,
@@ -53,8 +54,10 @@ interface UseSessionReturn {
   
   // Connection
   isConnected: boolean;
+  memberLeaveNotice: MemberLeftEvent | null;
   
   // Actions
+  notifyMemberLeft: (payload: { memberId: string; memberName: string; isHost: boolean }) => Promise<void>;
   refreshSession: () => Promise<void>;
   startOptimization: (query?: string) => Promise<void>;
   submitVote: (venueId: string) => Promise<void>;
@@ -76,6 +79,7 @@ export function useSession({ sessionId, memberId }: UseSessionOptions): UseSessi
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [isComputing, setIsComputing] = useState(false);
+  const [memberLeaveNotice, setMemberLeaveNotice] = useState<MemberLeftEvent | null>(null);
   
   const loadedRef = useRef(false);
 
@@ -116,6 +120,10 @@ export function useSession({ sessionId, memberId }: UseSessionOptions): UseSessi
 
   // SignalR event handlers
   const handleMemberJoined = useCallback((event: MemberJoinedEvent) => {
+    if (event.isHost) {
+      setMemberLeaveNotice(null);
+    }
+
     setMembers((prev) => {
       const nextMember: Member = {
         id: event.memberId,
@@ -136,6 +144,10 @@ export function useSession({ sessionId, memberId }: UseSessionOptions): UseSessi
 
       return [...prev, nextMember];
     });
+  }, []);
+
+  const handleMemberLeft = useCallback((event: MemberLeftEvent) => {
+    setMemberLeaveNotice(event);
   }, []);
 
   const handleComputingStarted = useCallback(() => {
@@ -180,9 +192,10 @@ export function useSession({ sessionId, memberId }: UseSessionOptions): UseSessi
   }, []);
 
   // SignalR connection
-  const { isConnected } = useSignalR({
+  const { isConnected, notifyMemberLeft } = useSignalR({
     sessionId,
     onMemberJoined: handleMemberJoined,
+    onMemberLeft: handleMemberLeft,
     onComputingStarted: handleComputingStarted,
     onOptimizationCompleted: handleOptimizationCompleted,
     onVoteSubmitted: handleVoteSubmitted,
@@ -306,6 +319,8 @@ export function useSession({ sessionId, memberId }: UseSessionOptions): UseSessi
     isRoutePreview,
     isCompleted,
     isConnected,
+    memberLeaveNotice,
+    notifyMemberLeft,
     refreshSession,
     startOptimization,
     submitVote,
