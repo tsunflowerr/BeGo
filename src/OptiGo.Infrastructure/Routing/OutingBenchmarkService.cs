@@ -1,4 +1,7 @@
 using System.Diagnostics;
+using System.Text.Json;
+using Google.OrTools.ConstraintSolver;
+using Google.Protobuf.WellKnownTypes;
 using OptiGo.Application.Interfaces;
 using OptiGo.Application.UseCases;
 using OptiGo.Domain.Entities;
@@ -42,8 +45,10 @@ public class OutingBenchmarkService : IOutingBenchmarkService
             var runs = new List<BenchmarkAlgorithmRunDto>
             {
                 await RunWeightedMedianNearestDriverAsync(scenario, ct),
-                await RunGreedyCheapestInsertionAsync(scenario, ct),
-                await RunExactDoorstepVrpAsync(scenario, ct),
+                await RunOrToolsPickupCostFirstAsync(scenario, ct),
+                await RunOrToolsFairnessTunedAsync(scenario, ct),
+                await RunPyvrpNativeCostFirstAsync(scenario, ct),
+                await RunPyvrpNativeFairnessSelectedAsync(scenario, ct),
                 await RunOptiGoHybridAsync(scenario, ct)
             };
             foreach (var run in runs)
@@ -240,31 +245,6 @@ public class OutingBenchmarkService : IOutingBenchmarkService
         return ToRun("median_nearest", "Weighted median + nearest driver", false, candidate, stopwatch.Elapsed.TotalMilliseconds);
     }
 
-    private async Task<BenchmarkAlgorithmRunDto> RunGreedyCheapestInsertionAsync(
-        BenchmarkScenario scenario,
-        CancellationToken ct)
-    {
-        var stopwatch = Stopwatch.StartNew();
-        var provider = new BenchmarkRouteCostProvider(scenario.Layout);
-        CandidateResultDto? best = null;
-
-        foreach (var venue in scenario.Venues)
-        {
-            var assignment = await BuildGreedyInsertionAssignmentAsync(scenario.Session, venue, provider, ct);
-            var candidate = assignment == null
-                ? await BuildInfeasibleCandidateAsync(scenario.Session, venue, provider, "Không greedy-insert được passenger vào capacity còn lại.", ct)
-                : await EvaluateDoorstepCandidateAsync(scenario.Session, venue, assignment, provider, ct);
-
-            if (best == null || RoutingSolutionScorer.CalculateTotalCostBaseline(candidate) < RoutingSolutionScorer.CalculateTotalCostBaseline(best))
-            {
-                best = candidate;
-            }
-        }
-
-        stopwatch.Stop();
-        return ToRun("greedy_insertion", "Greedy cheapest insertion", false, best!, stopwatch.Elapsed.TotalMilliseconds);
-    }
-
     private async Task<BenchmarkAlgorithmRunDto> RunExactDoorstepVrpAsync(
         BenchmarkScenario scenario,
         CancellationToken ct)
@@ -284,6 +264,94 @@ public class OutingBenchmarkService : IOutingBenchmarkService
 
         stopwatch.Stop();
         return ToRun("exact_doorstep_vrp", "Exact doorstep VRP", false, best!, stopwatch.Elapsed.TotalMilliseconds);
+    }
+
+    private async Task<BenchmarkAlgorithmRunDto> RunOrToolsPickupCostFirstAsync(
+        BenchmarkScenario scenario,
+        CancellationToken ct)
+    {
+        var stopwatch = Stopwatch.StartNew();
+        var provider = new BenchmarkRouteCostProvider(scenario.Layout);
+        var candidates = new List<CandidateResultDto>();
+
+        foreach (var venue in scenario.Venues)
+        {
+            var assignment = await BuildOrToolsAssignmentAsync(scenario.Session, venue, provider, ct);
+            var candidate = assignment == null
+                ? await BuildInfeasibleCandidateAsync(scenario.Session, venue, provider, "OR-Tools không tìm được nghiệm capacity pickup.", ct)
+                : await EvaluateDoorstepCandidateAsync(scenario.Session, venue, assignment, provider, ct);
+            candidates.Add(candidate);
+        }
+
+        stopwatch.Stop();
+        var best = candidates.OrderBy(RoutingSolutionScorer.CalculatePureCost).First();
+        return ToRun("ortools_pickup_cost", "OR-Tools pickup VRP cost-first", false, best, stopwatch.Elapsed.TotalMilliseconds);
+    }
+
+    private async Task<BenchmarkAlgorithmRunDto> RunOrToolsFairnessTunedAsync(
+        BenchmarkScenario scenario,
+        CancellationToken ct)
+    {
+        var stopwatch = Stopwatch.StartNew();
+        var provider = new BenchmarkRouteCostProvider(scenario.Layout);
+        var candidates = new List<CandidateResultDto>();
+
+        foreach (var venue in scenario.Venues)
+        {
+            var assignment = await BuildOrToolsAssignmentAsync(scenario.Session, venue, provider, ct);
+            var candidate = assignment == null
+                ? await BuildInfeasibleCandidateAsync(scenario.Session, venue, provider, "OR-Tools không tìm được nghiệm capacity pickup.", ct)
+                : await EvaluateDoorstepCandidateAsync(scenario.Session, venue, assignment, provider, ct);
+            candidates.Add(candidate);
+        }
+
+        stopwatch.Stop();
+        var best = SelectFairnessTunedExternalCandidate(candidates);
+        return ToRun("ortools_pickup_fair", "OR-Tools pickup VRP fairness-tuned", false, best, stopwatch.Elapsed.TotalMilliseconds);
+    }
+
+    private async Task<BenchmarkAlgorithmRunDto> RunPyvrpNativeCostFirstAsync(
+        BenchmarkScenario scenario,
+        CancellationToken ct)
+    {
+        var stopwatch = Stopwatch.StartNew();
+        var provider = new BenchmarkRouteCostProvider(scenario.Layout);
+        var candidates = new List<CandidateResultDto>();
+
+        foreach (var venue in scenario.Venues)
+        {
+            var assignment = await BuildPyvrpAssignmentAsync(scenario, venue, provider, ct);
+            var candidate = assignment == null
+                ? await BuildInfeasibleCandidateAsync(scenario.Session, venue, provider, "PyVRP native không tìm được nghiệm capacity pickup.", ct)
+                : await EvaluateDoorstepCandidateAsync(scenario.Session, venue, assignment, provider, ct);
+            candidates.Add(candidate);
+        }
+
+        stopwatch.Stop();
+        var best = candidates.OrderBy(RoutingSolutionScorer.CalculatePureCost).First();
+        return ToRun("pyvrp_hgs_cost", "PyVRP Hybrid Genetic Search cost-first", false, best, stopwatch.Elapsed.TotalMilliseconds);
+    }
+
+    private async Task<BenchmarkAlgorithmRunDto> RunPyvrpNativeFairnessSelectedAsync(
+        BenchmarkScenario scenario,
+        CancellationToken ct)
+    {
+        var stopwatch = Stopwatch.StartNew();
+        var provider = new BenchmarkRouteCostProvider(scenario.Layout);
+        var candidates = new List<CandidateResultDto>();
+
+        foreach (var venue in scenario.Venues)
+        {
+            var assignment = await BuildPyvrpAssignmentAsync(scenario, venue, provider, ct);
+            var candidate = assignment == null
+                ? await BuildInfeasibleCandidateAsync(scenario.Session, venue, provider, "PyVRP native không tìm được nghiệm capacity pickup.", ct)
+                : await EvaluateDoorstepCandidateAsync(scenario.Session, venue, assignment, provider, ct);
+            candidates.Add(candidate);
+        }
+
+        stopwatch.Stop();
+        var best = SelectFairnessTunedExternalCandidate(candidates);
+        return ToRun("pyvrp_hgs_fair", "PyVRP Hybrid Genetic Search fairness-selected", false, best, stopwatch.Elapsed.TotalMilliseconds);
     }
 
     private async Task<BenchmarkAlgorithmRunDto> RunOptiGoHybridAsync(
@@ -348,6 +416,257 @@ public class OutingBenchmarkService : IOutingBenchmarkService
             .First();
     }
 
+    private static CandidateResultDto SelectFairnessTunedExternalCandidate(IReadOnlyList<CandidateResultDto> candidates)
+    {
+        var feasible = candidates.Where(candidate => candidate.IsFeasible).ToList();
+        var pool = feasible.Count > 0 ? feasible : candidates.ToList();
+        var bestPureCost = pool.Min(RoutingSolutionScorer.CalculatePureCost);
+        var costGuard = bestPureCost * FairnessCostGuardRatio + FairnessCostGuardSlackSeconds;
+        var boundedCostPool = pool
+            .Where(candidate => RoutingSolutionScorer.CalculatePureCost(candidate) <= costGuard)
+            .ToList();
+
+        return boundedCostPool
+            .OrderBy(RoutingSolutionScorer.CalculateFairnessScore)
+            .ThenBy(candidate => candidate.Metrics.MaxMemberBurdenSeconds)
+            .ThenBy(candidate => candidate.Metrics.WorstMemberRegretSeconds)
+            .ThenBy(candidate => candidate.Metrics.PassengerBurdenGini)
+            .ThenBy(candidate => candidate.Metrics.DriverDetourGini)
+            .ThenBy(RoutingSolutionScorer.CalculatePureCost)
+            .First();
+    }
+
+    private async Task<Dictionary<Guid, List<Member>>?> BuildOrToolsAssignmentAsync(
+        Session session,
+        Venue venue,
+        IRouteCostProvider provider,
+        CancellationToken ct)
+    {
+        var drivers = session.Members.Where(member => member.CanOfferPickup()).ToList();
+        var passengers = session.Members.Where(member => member.NeedsPickup()).ToList();
+        if (drivers.Count == 0 && passengers.Count > 0)
+            return null;
+
+        if (drivers.Sum(driver => driver.GetSeatCapacity()) < passengers.Count)
+            return null;
+
+        if (passengers.Count == 0)
+            return drivers.ToDictionary(driver => driver.Id, _ => new List<Member>());
+
+        var nodes = new List<Coordinate>();
+        nodes.AddRange(drivers.Select(driver => driver.GetLocation()));
+        nodes.AddRange(passengers.Select(passenger => passenger.GetLocation()));
+        nodes.Add(venue.GetLocation());
+        var venueNode = nodes.Count - 1;
+        var vehicleMatrices = new List<TravelMatrixResult>();
+        foreach (var driver in drivers)
+        {
+            vehicleMatrices.Add(await provider.GetEstimatedMatrixAsync(nodes, nodes, driver.TransportMode, ct: ct));
+        }
+
+        var nodeCount = nodes.Count;
+        var vehicleCount = drivers.Count;
+        var starts = Enumerable.Range(0, vehicleCount).ToArray();
+        var ends = Enumerable.Repeat(venueNode, vehicleCount).ToArray();
+        var manager = new RoutingIndexManager(nodeCount, vehicleCount, starts, ends);
+        using var routing = new RoutingModel(manager);
+
+        var transitCallbackIndexes = new int[vehicleCount];
+        for (var vehicle = 0; vehicle < vehicleCount; vehicle++)
+        {
+            var vehicleMatrix = vehicleMatrices[vehicle];
+            var callbackIndex = routing.RegisterTransitCallback((fromIndex, toIndex) =>
+            {
+                var fromNode = manager.IndexToNode(fromIndex);
+                var toNode = manager.IndexToNode(toIndex);
+                return Math.Max(1, (long)Math.Round(vehicleMatrix.Durations[fromNode, toNode]));
+            });
+            transitCallbackIndexes[vehicle] = callbackIndex;
+            routing.SetArcCostEvaluatorOfVehicle(callbackIndex, vehicle);
+        }
+
+        var demandCallbackIndex = routing.RegisterUnaryTransitCallback(fromIndex =>
+        {
+            var node = manager.IndexToNode(fromIndex);
+            return node >= drivers.Count && node < drivers.Count + passengers.Count ? 1 : 0;
+        });
+        routing.AddDimensionWithVehicleCapacity(
+            demandCallbackIndex,
+            0,
+            drivers.Select(driver => (long)driver.GetSeatCapacity()).ToArray(),
+            true,
+            "Capacity");
+
+        routing.AddDimensionWithVehicleTransits(
+            transitCallbackIndexes,
+            0,
+            24 * 60 * 60,
+            true,
+            "Time");
+        var timeDimension = routing.GetMutableDimension("Time");
+        timeDimension.SetGlobalSpanCostCoefficient(1);
+
+        var searchParameters = operations_research_constraint_solver.DefaultRoutingSearchParameters();
+        searchParameters.FirstSolutionStrategy = FirstSolutionStrategy.Types.Value.PathCheapestArc;
+        searchParameters.LocalSearchMetaheuristic = LocalSearchMetaheuristic.Types.Value.GuidedLocalSearch;
+        searchParameters.TimeLimit = new Duration { Nanos = 150_000_000 };
+
+        var solution = routing.SolveWithParameters(searchParameters);
+        if (solution == null)
+            return null;
+
+        var assignment = drivers.ToDictionary(driver => driver.Id, _ => new List<Member>());
+        for (var vehicle = 0; vehicle < vehicleCount; vehicle++)
+        {
+            var index = routing.Start(vehicle);
+            var driver = drivers[vehicle];
+            while (!routing.IsEnd(index))
+            {
+                var node = manager.IndexToNode(index);
+                if (node >= drivers.Count && node < drivers.Count + passengers.Count)
+                {
+                    assignment[driver.Id].Add(passengers[node - drivers.Count]);
+                }
+
+                index = solution.Value(routing.NextVar(index));
+            }
+        }
+
+        var assignedPassengerCount = assignment.Values.Sum(passengerList => passengerList.Count);
+        return assignedPassengerCount == passengers.Count ? assignment : null;
+    }
+
+    private async Task<Dictionary<Guid, List<Member>>?> BuildPyvrpAssignmentAsync(
+        BenchmarkScenario scenario,
+        Venue venue,
+        IRouteCostProvider provider,
+        CancellationToken ct)
+    {
+        var drivers = scenario.Session.Members.Where(member => member.CanOfferPickup()).ToList();
+        var passengers = scenario.Session.Members.Where(member => member.NeedsPickup()).ToList();
+        if (drivers.Count == 0 && passengers.Count > 0)
+            return null;
+
+        if (drivers.Sum(driver => driver.GetSeatCapacity()) < passengers.Count)
+            return null;
+
+        if (passengers.Count == 0)
+            return drivers.ToDictionary(driver => driver.Id, _ => new List<Member>());
+
+        var scriptPath = LocateNativeBenchmarkScript("pyvrp_solve.py");
+        if (scriptPath == null)
+            return null;
+
+        var nodes = new List<Coordinate>();
+        nodes.AddRange(drivers.Select(driver => driver.GetLocation()));
+        nodes.AddRange(passengers.Select(passenger => passenger.GetLocation()));
+        nodes.Add(venue.GetLocation());
+        var venueNode = nodes.Count - 1;
+        var vehicleMatrices = new List<TravelMatrixResult>();
+        foreach (var driver in drivers)
+        {
+            vehicleMatrices.Add(await provider.GetEstimatedMatrixAsync(nodes, nodes, driver.TransportMode, ct: ct));
+        }
+
+        var workDir = Path.Combine(Path.GetTempPath(), "optigo-native-benchmarks");
+        Directory.CreateDirectory(workDir);
+        var prefix = $"{scenario.ScenarioId}-{venue.Id}-{Guid.NewGuid():N}";
+        var inputPath = Path.Combine(workDir, $"{prefix}-pyvrp-input.json");
+        var outputPath = Path.Combine(workDir, $"{prefix}-pyvrp-output.json");
+
+        var payload = new
+        {
+            scenarioId = scenario.ScenarioId,
+            venueId = venue.Id,
+            seed = Math.Abs(HashCode.Combine(scenario.ScenarioId, venue.Id)),
+            timeLimitSeconds = 0.15,
+            serviceSeconds = RoutingDefaults.BasePickupServiceSeconds + RoutingDefaults.BoardingServiceSecondsPerPassenger,
+            venueNode,
+            nodes = nodes.Select((node, index) => new
+            {
+                index,
+                x = node.Longitude,
+                y = node.Latitude
+            }),
+            drivers = drivers.Select((driver, index) => new
+            {
+                index,
+                node = index,
+                capacity = driver.GetSeatCapacity(),
+                profile = index,
+                transportMode = driver.TransportMode.ToString()
+            }),
+            passengers = passengers.Select((passenger, index) => new
+            {
+                index,
+                node = drivers.Count + index
+            }),
+            durationProfiles = vehicleMatrices.Select(matrix => ToJaggedArray(matrix.Durations))
+        };
+
+        await File.WriteAllTextAsync(inputPath, JsonSerializer.Serialize(payload), ct);
+        try
+        {
+            var startInfo = new ProcessStartInfo
+            {
+                FileName = "python",
+                UseShellExecute = false,
+                RedirectStandardError = true,
+                RedirectStandardOutput = true
+            };
+            startInfo.ArgumentList.Add(scriptPath);
+            startInfo.ArgumentList.Add(inputPath);
+            startInfo.ArgumentList.Add(outputPath);
+
+            using var process = Process.Start(startInfo);
+            if (process == null)
+                return null;
+
+            var waitForExit = process.WaitForExitAsync(ct);
+            var timeout = Task.Delay(TimeSpan.FromSeconds(12), ct);
+            var completedTask = await Task.WhenAny(waitForExit, timeout);
+            if (completedTask != waitForExit)
+            {
+                TryKill(process);
+                return null;
+            }
+
+            if (process.ExitCode != 0 || !File.Exists(outputPath))
+                return null;
+
+            var outputJson = await File.ReadAllTextAsync(outputPath, ct);
+            var output = JsonSerializer.Deserialize<PyvrpOutputDto>(
+                outputJson,
+                new JsonSerializerOptions { PropertyNameCaseInsensitive = true });
+            if (output is not { IsFeasible: true })
+                return null;
+
+            var assignment = drivers.ToDictionary(driver => driver.Id, _ => new List<Member>());
+            foreach (var route in output.Routes)
+            {
+                if (route.DriverIndex < 0 || route.DriverIndex >= drivers.Count)
+                    continue;
+
+                var driver = drivers[route.DriverIndex];
+                foreach (var passengerIndex in route.PassengerIndices)
+                {
+                    if (passengerIndex >= 0 && passengerIndex < passengers.Count)
+                    {
+                        assignment[driver.Id].Add(passengers[passengerIndex]);
+                    }
+                }
+            }
+
+            var assignedPassengerCount = assignment.Values.Sum(passengerList => passengerList.Count);
+            return assignedPassengerCount == passengers.Count ? assignment : null;
+        }
+        finally
+        {
+            TryDelete(inputPath);
+            TryDelete(outputPath);
+        }
+    }
+
     private static Dictionary<Guid, List<Member>>? BuildNearestDriverAssignment(Session session)
     {
         var drivers = session.Members.Where(member => member.CanOfferPickup()).ToList();
@@ -363,49 +682,6 @@ public class OutingBenchmarkService : IOutingBenchmarkService
                 return null;
 
             assignment[driver.Id].Add(passenger);
-        }
-
-        return assignment;
-    }
-
-    private async Task<Dictionary<Guid, List<Member>>?> BuildGreedyInsertionAssignmentAsync(
-        Session session,
-        Venue venue,
-        IRouteCostProvider provider,
-        CancellationToken ct)
-    {
-        var drivers = session.Members.Where(member => member.CanOfferPickup()).ToList();
-        var assignment = drivers.ToDictionary(driver => driver.Id, _ => new List<Member>());
-        var passengers = session.Members
-            .Where(member => member.NeedsPickup())
-            .OrderByDescending(passenger => drivers
-                .Select(driver => driver.GetLocation().DistanceTo(passenger.GetLocation()))
-                .DefaultIfEmpty(0)
-                .Min())
-            .ToList();
-
-        foreach (var passenger in passengers)
-        {
-            Member? bestDriver = null;
-            double bestIncrement = double.PositiveInfinity;
-
-            foreach (var driver in drivers.Where(driver => assignment[driver.Id].Count < driver.GetSeatCapacity()))
-            {
-                var currentCost = await EstimateDoorstepDriverDurationAsync(driver, assignment[driver.Id], venue, provider, ct);
-                var proposal = assignment[driver.Id].Append(passenger).ToList();
-                var proposalCost = await EstimateDoorstepDriverDurationAsync(driver, proposal, venue, provider, ct);
-                var increment = proposalCost - currentCost;
-                if (increment < bestIncrement)
-                {
-                    bestIncrement = increment;
-                    bestDriver = driver;
-                }
-            }
-
-            if (bestDriver == null)
-                return null;
-
-            assignment[bestDriver.Id].Add(passenger);
         }
 
         return assignment;
@@ -942,7 +1218,8 @@ public class OutingBenchmarkService : IOutingBenchmarkService
             {
                 var groupRuns = group.ToList();
                 var serviceableRuns = groupRuns.Where(run => run.IsScenarioServiceable).ToList();
-                var wins = groupRuns.Count(run =>
+                var metricRuns = serviceableRuns.Count > 0 ? serviceableRuns : groupRuns;
+                var wins = metricRuns.Count(run =>
                     bestByScenario.TryGetValue(run.ScenarioId, out var best) &&
                     IsTiedWithBest(run, best));
 
@@ -957,24 +1234,24 @@ public class OutingBenchmarkService : IOutingBenchmarkService
                     ServiceableFeasibleRate = serviceableRuns.Count == 0
                         ? 0
                         : serviceableRuns.Count(run => run.IsFeasible) / (double)serviceableRuns.Count,
-                    WinRate = groupRuns.Count == 0 ? 0 : wins / (double)groupRuns.Count,
-                    AverageObjectiveSeconds = groupRuns.Average(run => run.ObjectiveSeconds),
-                    AveragePureCostSeconds = groupRuns.Average(run => run.PureCostSeconds),
-                    AverageFairnessScoreSeconds = groupRuns.Average(run => run.FairnessScoreSeconds),
-                    AverageCostGapToBestExternalPercent = groupRuns.Average(run => run.CostGapToBestExternalPercent),
-                    AverageFairnessGainVsBestCostExternalPercent = groupRuns.Average(run => run.FairnessGainVsBestCostExternalPercent),
-                    AverageTotalGroupTimeSeconds = groupRuns.Average(run => run.TotalGroupTimeSeconds),
-                    AverageMaxPassengerTimeSeconds = groupRuns.Average(run => run.MaxPassengerTimeSeconds),
-                    AverageMaxMemberBurdenSeconds = groupRuns.Average(run => run.MaxMemberBurdenSeconds),
-                    AverageWorstMemberRegretSeconds = groupRuns.Average(run => run.WorstMemberRegretSeconds),
-                    AveragePassengerBurdenGini = groupRuns.Average(run => run.PassengerBurdenGini),
-                    AverageMaxDriverDetourSeconds = groupRuns.Average(run => run.MaxDriverDetourSeconds),
-                    AverageStdDriverDetourSeconds = groupRuns.Average(run => run.StdDriverDetourSeconds),
-                    AverageDriverDetourGini = groupRuns.Average(run => run.DriverDetourGini),
-                    AverageMaxWalkingTimeSeconds = groupRuns.Average(run => run.MaxWalkingTimeSeconds),
-                    AverageSharedStopRate = groupRuns.Average(run => run.SharedStopRate),
-                    AverageStopCount = groupRuns.Average(run => run.StopCount),
-                    AverageComputeTimeMs = groupRuns.Average(run => run.ComputeTimeMs)
+                    WinRate = metricRuns.Count == 0 ? 0 : wins / (double)metricRuns.Count,
+                    AverageObjectiveSeconds = metricRuns.Average(run => run.ObjectiveSeconds),
+                    AveragePureCostSeconds = metricRuns.Average(run => run.PureCostSeconds),
+                    AverageFairnessScoreSeconds = metricRuns.Average(run => run.FairnessScoreSeconds),
+                    AverageCostGapToBestExternalPercent = metricRuns.Average(run => run.CostGapToBestExternalPercent),
+                    AverageFairnessGainVsBestCostExternalPercent = metricRuns.Average(run => run.FairnessGainVsBestCostExternalPercent),
+                    AverageTotalGroupTimeSeconds = metricRuns.Average(run => run.TotalGroupTimeSeconds),
+                    AverageMaxPassengerTimeSeconds = metricRuns.Average(run => run.MaxPassengerTimeSeconds),
+                    AverageMaxMemberBurdenSeconds = metricRuns.Average(run => run.MaxMemberBurdenSeconds),
+                    AverageWorstMemberRegretSeconds = metricRuns.Average(run => run.WorstMemberRegretSeconds),
+                    AveragePassengerBurdenGini = metricRuns.Average(run => run.PassengerBurdenGini),
+                    AverageMaxDriverDetourSeconds = metricRuns.Average(run => run.MaxDriverDetourSeconds),
+                    AverageStdDriverDetourSeconds = metricRuns.Average(run => run.StdDriverDetourSeconds),
+                    AverageDriverDetourGini = metricRuns.Average(run => run.DriverDetourGini),
+                    AverageMaxWalkingTimeSeconds = metricRuns.Average(run => run.MaxWalkingTimeSeconds),
+                    AverageSharedStopRate = metricRuns.Average(run => run.SharedStopRate),
+                    AverageStopCount = metricRuns.Average(run => run.StopCount),
+                    AverageComputeTimeMs = metricRuns.Average(run => run.ComputeTimeMs)
                 };
             })
             .OrderBy(aggregate => aggregate.IsOptiGo ? 0 : 1)
@@ -1123,6 +1400,24 @@ public class OutingBenchmarkService : IOutingBenchmarkService
         },
         new()
         {
+            Label = "PyVRP Hybrid Genetic Search native solver",
+            Url = "https://github.com/PyVRP/PyVRP",
+            Relevance = "Native HGS baseline được gọi qua Python bridge; output route được normalize về evaluator OptiGo."
+        },
+        new()
+        {
+            Label = "VROOM open-source routing engine",
+            Url = "https://github.com/VROOM-Project/vroom",
+            Relevance = "Đã pull source để tích hợp native sau; không còn được report như external result nếu chưa chạy binary thật."
+        },
+        new()
+        {
+            Label = "jsprit vehicle routing toolkit",
+            Url = "https://github.com/graphhopper/jsprit",
+            Relevance = "Đã pull source để tích hợp Java native sau; không còn được report như external result nếu chưa chạy jsprit thật."
+        },
+        new()
+        {
             Label = "OR-Tools routing solver paper",
             Url = "https://research.google/pubs/or-tools-vehicle-routing-solver-a-generic-constraint-programming-solver-with-heuristic-search-for-routing-problems/",
             Relevance = "Mô tả kiến trúc first-solution heuristics, local search, metaheuristics và constraint programming."
@@ -1177,6 +1472,80 @@ public class OutingBenchmarkService : IOutingBenchmarkService
 
     private static Coordinate Offset(Coordinate center, double latitudeDelta, double longitudeDelta) =>
         new(center.Latitude + latitudeDelta, center.Longitude + longitudeDelta);
+
+    private static double[][] ToJaggedArray(double[,] matrix)
+    {
+        var rows = matrix.GetLength(0);
+        var columns = matrix.GetLength(1);
+        var result = new double[rows][];
+        for (var row = 0; row < rows; row++)
+        {
+            result[row] = new double[columns];
+            for (var column = 0; column < columns; column++)
+            {
+                result[row][column] = matrix[row, column];
+            }
+        }
+
+        return result;
+    }
+
+    private static string? LocateNativeBenchmarkScript(string fileName)
+    {
+        var current = new DirectoryInfo(Directory.GetCurrentDirectory());
+        while (current != null)
+        {
+            var candidate = Path.Combine(current.FullName, "benchmarks", "native", fileName);
+            if (File.Exists(candidate))
+                return candidate;
+
+            current = current.Parent;
+        }
+
+        return null;
+    }
+
+    private static void TryKill(Process process)
+    {
+        try
+        {
+            if (!process.HasExited)
+            {
+                process.Kill(entireProcessTree: true);
+            }
+        }
+        catch
+        {
+            // Best-effort cleanup for benchmark subprocesses.
+        }
+    }
+
+    private static void TryDelete(string path)
+    {
+        try
+        {
+            if (File.Exists(path))
+            {
+                File.Delete(path);
+            }
+        }
+        catch
+        {
+            // Best-effort cleanup for temporary benchmark files.
+        }
+    }
+
+    private sealed class PyvrpOutputDto
+    {
+        public bool IsFeasible { get; init; }
+        public List<PyvrpRouteDto> Routes { get; init; } = [];
+    }
+
+    private sealed class PyvrpRouteDto
+    {
+        public int DriverIndex { get; init; }
+        public List<int> PassengerIndices { get; init; } = [];
+    }
 
     private sealed record BenchmarkScenario(
         string ScenarioId,
