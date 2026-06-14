@@ -5,7 +5,12 @@ namespace OptiGo.Application.UseCases;
 
 public record RunOutingBenchmarkQuery(
     int Seed = 20260505,
-    int ScenarioCount = 18) : IRequest<OutingBenchmarkReportDto>;
+    int ScenarioCount = 24,
+    string BenchmarkMode = "synthetic",
+    string? PublicDataRoot = null,
+    int DarpSlicesPerFile = 8,
+    int LiLimSlicesPerFile = 8,
+    int PublicMaxVenuesPerScenario = 4) : IRequest<OutingBenchmarkReportDto>;
 
 public class RunOutingBenchmarkHandler : IRequestHandler<RunOutingBenchmarkQuery, OutingBenchmarkReportDto>
 {
@@ -23,7 +28,12 @@ public class RunOutingBenchmarkHandler : IRequestHandler<RunOutingBenchmarkQuery
             new OutingBenchmarkRequestDto
             {
                 Seed = request.Seed,
-                ScenarioCount = request.ScenarioCount
+                ScenarioCount = request.ScenarioCount,
+                BenchmarkMode = request.BenchmarkMode,
+                PublicDataRoot = request.PublicDataRoot,
+                DarpSlicesPerFile = request.DarpSlicesPerFile,
+                LiLimSlicesPerFile = request.LiLimSlicesPerFile,
+                PublicMaxVenuesPerScenario = request.PublicMaxVenuesPerScenario
             },
             cancellationToken);
 }
@@ -31,7 +41,16 @@ public class RunOutingBenchmarkHandler : IRequestHandler<RunOutingBenchmarkQuery
 public class OutingBenchmarkRequestDto
 {
     public int Seed { get; init; } = 20260505;
-    public int ScenarioCount { get; init; } = 18;
+    public int ScenarioCount { get; init; } = 24;
+    public bool UseRealMapbox { get; init; }
+    public bool UseRealVenues { get; init; }
+    public string? MapboxApiKey { get; init; }
+    public string? GoogleApiKey { get; init; }
+    public string BenchmarkMode { get; init; } = "synthetic";
+    public string? PublicDataRoot { get; init; }
+    public int DarpSlicesPerFile { get; init; } = 8;
+    public int LiLimSlicesPerFile { get; init; } = 8;
+    public int PublicMaxVenuesPerScenario { get; init; } = 4;
 }
 
 public class OutingBenchmarkReportDto
@@ -59,6 +78,7 @@ public class BenchmarkAlgorithmAggregateDto
     public string AlgorithmKey { get; init; } = string.Empty;
     public string AlgorithmName { get; init; } = string.Empty;
     public bool IsOptiGo { get; init; }
+    public string BenchmarkGroup { get; init; } = "A";
     public int Runs { get; init; }
     public int ServiceableRuns { get; init; }
     public double FeasibleRate { get; init; }
@@ -86,6 +106,9 @@ public class BenchmarkAlgorithmAggregateDto
 public class BenchmarkScenarioResultDto
 {
     public string ScenarioId { get; init; } = string.Empty;
+    public string DatasetName { get; init; } = "synthetic";
+    public string InstanceName { get; init; } = string.Empty;
+    public int ScenarioSlice { get; init; }
     public string Layout { get; init; } = string.Empty;
     public int MemberCount { get; init; }
     public int DriverCount { get; init; }
@@ -121,12 +144,16 @@ public class BenchmarkVenueDto
 public class BenchmarkAlgorithmRunDto
 {
     public string ScenarioId { get; set; } = string.Empty;
+    public string DatasetName { get; set; } = "synthetic";
+    public string InstanceName { get; set; } = string.Empty;
+    public int ScenarioSlice { get; set; }
     public string AlgorithmKey { get; init; } = string.Empty;
     public string AlgorithmName { get; init; } = string.Empty;
     public bool IsOptiGo { get; init; }
     public string SelectedVenueId { get; init; } = string.Empty;
     public string SelectedVenueName { get; init; } = string.Empty;
     public bool IsScenarioServiceable { get; set; }
+    public string BenchmarkGroup { get; init; } = "A";
     public bool IsFeasible { get; init; }
     public List<string> FeasibilityIssues { get; init; } = new();
     public double ObjectiveSeconds { get; init; }
@@ -151,6 +178,8 @@ public class BenchmarkAlgorithmRunDto
     public double GapToBestExternalPercent { get; set; }
     public double CostGapToBestExternalPercent { get; set; }
     public double FairnessGainVsBestCostExternalPercent { get; set; }
+    public bool CostGuardPassed { get; set; }
+    public double FairnessGainWithinGuardPercent { get; set; }
 }
 
 public class BenchmarkWeaknessDto

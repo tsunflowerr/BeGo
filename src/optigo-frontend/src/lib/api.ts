@@ -165,6 +165,16 @@ export const api = {
       return handleResponse<JoinSessionResponse>(response);
     },
 
+    addTestMember: async (sessionId: string, data: JoinSessionRequest): Promise<JoinSessionResponse> => {
+      const normalizedSessionId = normalizeSessionId(sessionId);
+      const response = await fetch(`${API_BASE_URL}/api/sessions/${normalizedSessionId}/test-members`, {
+        method: "POST",
+        headers: await authHeaders(),
+        body: JSON.stringify(data),
+      });
+      return handleResponse<JoinSessionResponse>(response);
+    },
+
     updateQuery: async (sessionId: string, queryText: string): Promise<void> => {
       const normalizedSessionId = normalizeSessionId(sessionId);
       const response = await fetch(`${API_BASE_URL}/api/sessions/${normalizedSessionId}/query`, {
@@ -248,10 +258,11 @@ export const api = {
   },
 
   benchmarks: {
-    runOuting: async (seed: number, scenarioCount: number): Promise<OutingBenchmarkReport> => {
+    runOuting: async (seed: number, scenarioCount: number, benchmarkMode = "synthetic"): Promise<OutingBenchmarkReport> => {
       const url = new URL(`${API_BASE_URL}/api/benchmarks/outing`);
       url.searchParams.set("seed", String(seed));
       url.searchParams.set("scenarioCount", String(scenarioCount));
+      url.searchParams.set("benchmarkMode", benchmarkMode);
       const response = await fetch(url.toString(), {
         method: "GET",
         headers: await authHeaders(),

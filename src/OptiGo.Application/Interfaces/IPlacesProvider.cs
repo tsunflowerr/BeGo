@@ -4,6 +4,14 @@ namespace OptiGo.Application.Interfaces;
 
 public interface IPlacesProvider
 {
+    Task<IReadOnlyList<Venue>> SearchTextAsync(
+        double latitude,
+        double longitude,
+        string textQuery,
+        double radiusMeters = 500,
+        int limit = 50,
+        CancellationToken ct = default);
+
     Task<IReadOnlyList<Venue>> SearchNearbyAsync(
         double latitude,
         double longitude,

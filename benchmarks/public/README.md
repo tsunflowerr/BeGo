@@ -1,0 +1,88 @@
+# Public Benchmark Datasets for Group Trip Planning & Carpooling
+
+This directory contains standardized, publicly available academic datasets to perform **unbiased and rigorous benchmarks** comparing the OptiGo Hybrid solver against standard baselines (e.g., Google OR-Tools, PyVRP HGS, and custom heuristics).
+
+Using these established public benchmarks ensures that all algorithms are evaluated fairly under identical, reproducible conditions, avoiding "self-generated bias" where synthetic data might inadvertently favor a specific heuristic.
+
+---
+
+## 1. Directory Structure
+
+```text
+benchmarks/public/
+├── README.md                 # This documentation
+├── darp-meeting-points/      # Dial-a-Ride Problem with Meeting Points (DARP-MP)
+│   ├── a2-16-24.txt
+│   ├── a2-20-30.txt
+│   └── ...
+└── li-lim-pdptw/             # Li & Lim Pickup & Delivery with Time Windows (PDPTW)
+    ├── lc101.txt             # Clustered instances
+    ├── lr101.txt             # Random/Spread instances
+    └── lrc101.txt            # Semi-clustered/Hybrid instances
+```
+
+---
+
+## 2. Dataset Overview
+
+### A. Dial-a-Ride Problem with Meeting Points (DARP-MP)
+Located in [`benchmarks/public/darp-meeting-points/`](file:///e:/Code/BeGo/benchmarks/public/darp-meeting-points).
+
+These instances are the **perfect fit** for the core problem OptiGo is designed to solve. In standard carpooling/ridesharing, passengers are picked up at their doorsteps. However, DARP-MP allows passengers to walk to nearby **meeting points** (or directly walk to the final destination) if doing so reduces detour times for drivers, leading to lower total group travel times and better fairness.
+
+#### File Header Format:
+Example (`a2-16-24.txt`):
+`2,16,480,3,30`
+* **`2`**: Number of available vehicles (drivers).
+* **`16`**: Number of requests (passengers needing pickup).
+* **`480`**: Planning horizon (duration, e.g., 480 minutes).
+* **`3`**: Vehicle seat capacity.
+* **`30`**: Maximum allowable ride time for any passenger (minutes).
+
+#### Node Data Format:
+Columns: `n,xc,yc,di,qi,ei,li`
+* **`n`**: Node ID.
+  * `0`: Starting depot (driver base).
+  * `1` to `8`: Origin locations of the passengers.
+  * `9` to `16`: Destination locations (where passengers want to go).
+  * `17` to `32`: Alternative delivery/meeting points.
+  * `33`: Ending depot.
+  * `34` onwards: Intermediate candidate meeting points.
+* **`xc`, `yc`**: X and Y coordinates (Euclidean space).
+* **`di`**: Service duration (minutes).
+* **`qi`**: Demand load (`+1` for pickup, `-1` for delivery, `0` for depots/meeting points).
+* **`ei`, `li`**: Time windows (earliest and latest allowable arrival times).
+
+---
+
+### B. Li & Lim PDPTW Benchmark
+Located in [`benchmarks/public/li-lim-pdptw/`](file:///e:/Code/BeGo/benchmarks/public/li-lim-pdptw).
+
+This is the **world standard** benchmark suite for the **Pickup and Delivery Problem with Time Windows (PDPTW)**. It is widely used in operations research journals to compare commercial solvers (like Gurobi, CPLEX, and Hexaly) and metaheuristics (such as PyVRP Hybrid Genetic Search).
+
+#### Instances provided:
+1. **`lc101.txt` (Clustered)**: Locations are clustered geographically. Solvers can easily group passengers, but route scheduling is tightly bound to clusters.
+2. **`lr101.txt` (Random/Spread)**: Locations are randomly scattered across the plane. This is highly challenging and tests the solvers' ability to optimize long-distance detours and scheduling.
+3. **`lrc101.txt` (Semi-clustered)**: A mix of clustered and random layouts, reflecting realistic urban and suburban transport networks.
+
+---
+
+## 3. Mapping to OptiGo / BeGo JSON Schema
+
+To benchmark these public instances, you can map their properties into the `OptiGo` scenario format (similar to [`benchmark-fair-synthetic.json`](file:///e:/Code/BeGo/benchmark-fair-synthetic.json)) using the following mapping:
+
+| Public Instance Field | OptiGo JSON Property | Description / Logic |
+| :--- | :--- | :--- |
+| `xc`, `yc` | `latitude`, `longitude` | Treat Euclidean $(x, y)$ coordinates as grid coordinates or map them directly (1 unit = 100m or 1km depending on speed defaults). |
+| Depot Nodes (Node `0`) | Drivers' starting locations | Map to a `Driver` member with `transportMode = "Car"` and `seatCapacity` equal to vehicle capacity. |
+| Customer Pickup (`qi = 1`) | Passengers needing pickup | Map to a `Member` with `role = "NeedsPickup"` and `transportMode = "Walking"`. |
+| Customer Delivery (`qi = -1`) | Target venue | In OptiGo's venue selection context, the delivery location is treated as the **candidate meeting venue** or meeting point. |
+| Meeting Points (`Node 34+`) | Venues / Shared Stops | Map to `venues` list. This enables evaluating OptiGo's ability to optimize the choice of destination and meeting points dynamically. |
+
+---
+
+## 4. Verification of Fairness
+These benchmarks are **fair and unbiased** because:
+1. **Zero-bias Generation**: The coordinates, time windows, and capacities were generated by independent academic researchers (Cordeau, Laporte, Li, Lim) without any knowledge of the OptiGo or BeGo codebase.
+2. **Deterministic Distance Matrix**: All algorithms (OR-Tools, PyVRP, and OptiGo) will use the exact same distance and travel time matrices computed from these Euclidean coordinates, ensuring the performance gap is purely due to algorithm intelligence, not data pre-processing.
+3. **Multi-objective Evaluation**: By solving these identical files, you can plot a **Pareto Frontier** comparing **Total Group Time** vs. **Fairness/Regret (Gini Coefficient)** to showcase OptiGo's superior fairness-aware objectives.

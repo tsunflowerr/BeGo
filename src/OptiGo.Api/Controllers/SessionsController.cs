@@ -9,10 +9,12 @@ namespace OptiGo.Api.Controllers;
 public class SessionsController : ControllerBase
 {
     private readonly IMediator _mediator;
+    private readonly IWebHostEnvironment _environment;
 
-    public SessionsController(IMediator mediator)
+    public SessionsController(IMediator mediator, IWebHostEnvironment environment)
     {
         _mediator = mediator;
+        _environment = environment;
     }
 
     [HttpGet("{id:guid}")]
@@ -37,6 +39,25 @@ public class SessionsController : ControllerBase
     public async Task<IActionResult> JoinSession(Guid id, [FromBody] JoinSessionRequest request)
     {
         var command = new JoinSessionCommand(
+            id,
+            request.MemberName,
+            request.Latitude,
+            request.Longitude,
+            request.TransportMode,
+            request.MobilityRole,
+            request.AvatarUrl);
+
+        var memberId = await _mediator.Send(command);
+        return Ok(new { MemberId = memberId });
+    }
+
+    [HttpPost("{id:guid}/test-members")]
+    public async Task<IActionResult> AddTestMember(Guid id, [FromBody] JoinSessionRequest request)
+    {
+        if (!_environment.IsDevelopment())
+            return NotFound();
+
+        var command = new AddTestMemberCommand(
             id,
             request.MemberName,
             request.Latitude,

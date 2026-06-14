@@ -1,4 +1,5 @@
 using System.Diagnostics;
+using System.Globalization;
 using System.Text.Json;
 using Google.OrTools.ConstraintSolver;
 using Google.Protobuf.WellKnownTypes;
@@ -15,6 +16,13 @@ public class OutingBenchmarkService : IOutingBenchmarkService
 {
     private const double FairnessCostGuardRatio = 1.08;
     private const double FairnessCostGuardSlackSeconds = 90;
+    private const string SyntheticBenchmarkMode = "synthetic";
+    private const string PublicAllBenchmarkMode = "public-all";
+    private const string DarpBenchmarkMode = "darp-mp";
+    private const string LiLimBenchmarkMode = "li-lim-pdptw";
+    private const double PublicCoordinateScaleDegrees = 0.0009;
+    private static readonly Coordinate PublicCoordinateAnchor = new(10.7769, 106.7009);
+    private static readonly Lazy<string> BenchmarkPythonExecutable = new(ResolvePythonExecutableCore);
 
     private static readonly string[] Layouts =
     [
@@ -23,7 +31,18 @@ public class OutingBenchmarkService : IOutingBenchmarkService
         "corridor",
         "outlier",
         "capacity_tight",
-        "shared_cluster"
+        "shared_cluster",
+        "uniform_grid"
+    ];
+
+    private static readonly (string Name, Coordinate Center, string Description)[] VietnamRegions =
+    [
+        ("Quận 1", new Coordinate(10.7756, 106.7019), "Trung tâm TP.HCM, nhiều quán café."),
+        ("Quận 3", new Coordinate(10.7844, 106.6887), "Khu dân cư + thương mại."),
+        ("Quận 7 (PMH)", new Coordinate(10.7293, 106.7218), "Khu đô thị mới, đường rộng."),
+        ("Thủ Đức", new Coordinate(10.8497, 106.7697), "Khu ĐHQG, xa trung tâm."),
+        ("Bình Thạnh", new Coordinate(10.8046, 106.7109), "Giáp ranh Q1, tắc đường."),
+        ("Tân Bình", new Coordinate(10.8022, 106.6527), "Gần sân bay, đa dạng đường.")
     ];
 
     public async Task<OutingBenchmarkReportDto> RunAsync(
@@ -32,10 +51,15 @@ public class OutingBenchmarkService : IOutingBenchmarkService
     {
         var startedAt = DateTimeOffset.UtcNow;
         var stopwatch = Stopwatch.StartNew();
-        var scenarioCount = Math.Clamp(request.ScenarioCount, 1, 60);
-        var scenarios = Enumerable.Range(0, scenarioCount)
-            .Select(index => GenerateScenario(request.Seed, index))
-            .ToList();
+        var benchmarkMode = NormalizeBenchmarkMode(request.BenchmarkMode);
+        var scenarioCount = Math.Clamp(request.ScenarioCount, 1, benchmarkMode == SyntheticBenchmarkMode ? 60 : 180);
+        var scenarios = benchmarkMode == SyntheticBenchmarkMode
+            ? Enumerable.Range(0, scenarioCount)
+                .Select(index => GenerateScenario(request.Seed, index))
+                .ToList()
+            : LoadPublicScenarios(request, benchmarkMode)
+                .Take(scenarioCount)
+                .ToList();
 
         var scenarioResults = new List<BenchmarkScenarioResultDto>();
         foreach (var scenario in scenarios)
@@ -44,16 +68,27 @@ public class OutingBenchmarkService : IOutingBenchmarkService
 
             var runs = new List<BenchmarkAlgorithmRunDto>
             {
+                // Group A: Assignment-Level (all use same TSP Held-Karp for ordering)
                 await RunWeightedMedianNearestDriverAsync(scenario, ct),
                 await RunOrToolsPickupCostFirstAsync(scenario, ct),
-                await RunOrToolsFairnessTunedAsync(scenario, ct),
+                await RunOrToolsPickupCost2sAsync(scenario, ct),
                 await RunPyvrpNativeCostFirstAsync(scenario, ct),
-                await RunPyvrpNativeFairnessSelectedAsync(scenario, ct),
+                await RunPyvrpNativeCost2sAsync(scenario, ct),
+                await RunVroomNativeCostFirstAsync(scenario, ct),
+                await RunOptiGoCostOnlyAsync(scenario, ct),
+                await RunOptiGoNoSharedStopAsync(scenario, ct),
+                // Group B: System-Level (each solver uses its own routing order)
+                await RunOrToolsFairness2sAsync(scenario, ct),
+                await RunPyvrpNativeFairness2sAsync(scenario, ct),
+                await RunVroomNativeFairnessAsync(scenario, ct),
                 await RunOptiGoHybridAsync(scenario, ct)
             };
             foreach (var run in runs)
             {
                 run.ScenarioId = scenario.ScenarioId;
+                run.DatasetName = scenario.DatasetName;
+                run.InstanceName = scenario.InstanceName;
+                run.ScenarioSlice = scenario.ScenarioSlice;
                 run.IsScenarioServiceable = IsServiceable(scenario);
             }
 
@@ -68,7 +103,7 @@ public class OutingBenchmarkService : IOutingBenchmarkService
         return new OutingBenchmarkReportDto
         {
             Seed = request.Seed,
-            ScenarioCount = scenarioCount,
+            ScenarioCount = scenarios.Count,
             StartedAt = startedAt,
             FinishedAt = finishedAt,
             TotalRuntimeMs = stopwatch.Elapsed.TotalMilliseconds,
@@ -107,7 +142,11 @@ public class OutingBenchmarkService : IOutingBenchmarkService
             pickupCount = Math.Max(0, memberCount - driverCount);
         }
 
-        var center = new Coordinate(10.7769, 106.7009);
+        // For scenarios 18+, use real TP.HCM district centers
+        var regionIndex = index - 18;
+        var center = regionIndex >= 0 && regionIndex < VietnamRegions.Length
+            ? VietnamRegions[regionIndex].Center
+            : new Coordinate(10.7769, 106.7009);
         var session = new Session($"bench-{index:000}");
 
         for (var i = 0; i < driverCount; i++)
@@ -150,19 +189,26 @@ public class OutingBenchmarkService : IOutingBenchmarkService
 
         var venueCount = random.Next(6, 11);
         var venues = GenerateVenues(layout, center, random, venueCount);
+        var regionDesc = regionIndex >= 0 && regionIndex < VietnamRegions.Length
+            ? $" ({VietnamRegions[regionIndex].Name}: {VietnamRegions[regionIndex].Description})"
+            : "";
         var description = layout switch
         {
-            "clustered" => "Nhóm gần nhau, dùng để kiểm tra overhead của pickup/meeting-point.",
-            "spread" => "Nhóm rải rộng, dễ lộ nhược điểm về tổng thời gian và fairness.",
-            "corridor" => "Nhiều điểm nằm dọc trục đi tới venue, phù hợp corridor/shared stop.",
-            "outlier" => "Có một passenger xa, kiểm tra max passenger time và detour.",
-            "capacity_tight" => "Số ghế sát nhu cầu, kiểm tra feasibility và phân bổ capacity.",
-            "shared_cluster" => "Passenger tập trung thành cụm, kiểm tra shared meetpoint.",
-            _ => "Synthetic small-group outing scenario."
+            "clustered" => "Nhóm gần nhau, dùng để kiểm tra overhead của pickup/meeting-point." + regionDesc,
+            "spread" => "Nhóm rải rộng, dễ lộ nhược điểm về tổng thời gian và fairness." + regionDesc,
+            "corridor" => "Nhiều điểm nằm dọc trục đi tới venue, phù hợp corridor/shared stop." + regionDesc,
+            "outlier" => "Có một passenger xa, kiểm tra max passenger time và detour." + regionDesc,
+            "capacity_tight" => "Số ghế sát nhu cầu, kiểm tra feasibility và phân bổ capacity." + regionDesc,
+            "shared_cluster" => "Passenger tập trung thành cụm, kiểm tra shared meetpoint." + regionDesc,
+            "uniform_grid" => "Phân bố đều trên lưới 3×3, test trung lập." + regionDesc,
+            _ => "Synthetic small-group outing scenario." + regionDesc
         };
 
         return new BenchmarkScenario(
             $"S{index + 1:000}",
+            "synthetic",
+            $"seed-{seed}",
+            index,
             layout,
             session,
             venues,
@@ -191,6 +237,7 @@ public class OutingBenchmarkService : IOutingBenchmarkService
             "shared_cluster" when isPickup => Offset(center, RandomRange(random, 0.008, 0.010), RandomRange(random, -0.002, 0.002)),
             "shared_cluster" => Offset(center, RandomRange(random, -0.016, 0.016), RandomRange(random, -0.018, 0.018)),
             "spread" => Offset(center, RandomRange(random, -0.035, 0.035), RandomRange(random, -0.040, 0.040)),
+            "uniform_grid" => Offset(center, -0.014 + 0.014 * (index % 3), -0.014 + 0.014 * (index / 3)),
             _ => Offset(center, RandomRange(random, -0.020, 0.020), RandomRange(random, -0.025, 0.025))
         };
     }
@@ -223,6 +270,332 @@ public class OutingBenchmarkService : IOutingBenchmarkService
         }
 
         return venues;
+    }
+
+    private static string NormalizeBenchmarkMode(string? benchmarkMode)
+    {
+        var normalized = string.IsNullOrWhiteSpace(benchmarkMode)
+            ? SyntheticBenchmarkMode
+            : benchmarkMode.Trim().ToLowerInvariant();
+
+        return normalized switch
+        {
+            "public" => PublicAllBenchmarkMode,
+            "darp" => DarpBenchmarkMode,
+            "darp-meeting-points" => DarpBenchmarkMode,
+            "li-lim" => LiLimBenchmarkMode,
+            "lilim" => LiLimBenchmarkMode,
+            "pdptw" => LiLimBenchmarkMode,
+            PublicAllBenchmarkMode => PublicAllBenchmarkMode,
+            DarpBenchmarkMode => DarpBenchmarkMode,
+            LiLimBenchmarkMode => LiLimBenchmarkMode,
+            _ => SyntheticBenchmarkMode
+        };
+    }
+
+    private static IReadOnlyList<BenchmarkScenario> LoadPublicScenarios(
+        OutingBenchmarkRequestDto request,
+        string benchmarkMode)
+    {
+        var publicRoot = ResolvePublicBenchmarkRoot(request.PublicDataRoot);
+        var scenarios = new List<BenchmarkScenario>();
+        var includeDarp = benchmarkMode is PublicAllBenchmarkMode or DarpBenchmarkMode;
+        var includeLiLim = benchmarkMode is PublicAllBenchmarkMode or LiLimBenchmarkMode;
+        var maxVenuesPerScenario = Math.Clamp(request.PublicMaxVenuesPerScenario, 2, 8);
+
+        if (includeDarp)
+        {
+            var darpRoot = Path.Combine(publicRoot, "darp-meeting-points");
+            foreach (var file in Directory.EnumerateFiles(darpRoot, "*.txt").OrderBy(Path.GetFileName, StringComparer.Ordinal))
+            {
+                scenarios.AddRange(BuildDarpMeetingPointScenarios(
+                    file,
+                    Math.Clamp(request.DarpSlicesPerFile, 1, 16),
+                    maxVenuesPerScenario));
+            }
+        }
+
+        if (includeLiLim)
+        {
+            var liLimRoot = Path.Combine(publicRoot, "li-lim-pdptw");
+            foreach (var file in Directory.EnumerateFiles(liLimRoot, "*.txt").OrderBy(Path.GetFileName, StringComparer.Ordinal))
+            {
+                scenarios.AddRange(BuildLiLimScenarios(
+                    file,
+                    Math.Clamp(request.LiLimSlicesPerFile, 1, 16),
+                    maxVenuesPerScenario));
+            }
+        }
+
+        return scenarios
+            .Select((scenario, index) => scenario with { ScenarioId = $"P{index + 1:000}" })
+            .ToList();
+    }
+
+    private static string ResolvePublicBenchmarkRoot(string? configuredRoot)
+    {
+        if (!string.IsNullOrWhiteSpace(configuredRoot))
+        {
+            var fullPath = Path.GetFullPath(configuredRoot);
+            if (Directory.Exists(fullPath))
+                return fullPath;
+        }
+
+        var current = new DirectoryInfo(Directory.GetCurrentDirectory());
+        while (current != null)
+        {
+            var candidate = Path.Combine(current.FullName, "benchmarks", "public");
+            if (Directory.Exists(candidate))
+                return candidate;
+
+            current = current.Parent;
+        }
+
+        throw new DirectoryNotFoundException("Không tìm thấy benchmarks/public để chạy public benchmark.");
+    }
+
+    private static IReadOnlyList<BenchmarkScenario> BuildDarpMeetingPointScenarios(
+        string filePath,
+        int slicesPerFile,
+        int maxVenuesPerScenario)
+    {
+        var lines = File.ReadAllLines(filePath)
+            .Where(line => !string.IsNullOrWhiteSpace(line))
+            .ToList();
+        if (lines.Count < 3)
+            return [];
+
+        var header = SplitPublicLine(lines[0]);
+        var vehicleCount = ParseInt(header[0]);
+        var requestNodeCount = ParseInt(header[1]);
+        var capacity = ParseInt(header[3]);
+        var requestPairCount = Math.Max(1, requestNodeCount / 2);
+        var nodes = lines
+            .Skip(2)
+            .Select(ParsePublicNode)
+            .ToDictionary(node => node.Id);
+        var allCoordinates = nodes.Values.Select(node => (node.X, node.Y)).ToList();
+        var instanceName = Path.GetFileNameWithoutExtension(filePath);
+        var scenarios = new List<BenchmarkScenario>();
+
+        for (var slice = 0; slice < slicesPerFile; slice++)
+        {
+            var session = new Session($"public-darp-{instanceName}-{slice:00}");
+            var driverCount = Math.Clamp(vehicleCount, 2, 4);
+            var selectedDriverIds = SelectRotatingIds(1, requestPairCount, driverCount, slice * 2);
+            var pickupPool = Enumerable.Range(1, requestPairCount)
+                .Where(id => !selectedDriverIds.Contains(id))
+                .ToList();
+            var passengerCount = Math.Min(Math.Min(driverCount * capacity, 8), pickupPool.Count);
+            var selectedPassengerIds = SelectRotatingIds(pickupPool, passengerCount, slice * 3);
+
+            foreach (var driverId in selectedDriverIds)
+            {
+                if (!nodes.TryGetValue(driverId, out var driverNode))
+                    continue;
+
+                session.AddMember(new Member(
+                    session.Id,
+                    $"Driver {driverId}",
+                    ToPublicCoordinate(driverNode.X, driverNode.Y, allCoordinates),
+                    TransportMode.Car,
+                    MemberMobilityRole.SelfTravel));
+            }
+
+            foreach (var passengerId in selectedPassengerIds)
+            {
+                if (!nodes.TryGetValue(passengerId, out var passengerNode))
+                    continue;
+
+                var member = new Member(
+                    session.Id,
+                    $"Passenger {passengerId}",
+                    ToPublicCoordinate(passengerNode.X, passengerNode.Y, allCoordinates),
+                    TransportMode.Walking,
+                    MemberMobilityRole.NeedsPickup);
+                session.AddMember(member);
+                session.CreateOrGetPickupRequest(member.Id);
+            }
+
+            var venueNodes = new List<PublicNode>();
+            venueNodes.AddRange(selectedPassengerIds
+                .Select(id => id + requestPairCount)
+                .Where(nodes.ContainsKey)
+                .Select(id => nodes[id]));
+            venueNodes.AddRange(nodes.Values
+                .Where(node => node.Id > requestNodeCount + 1)
+                .OrderBy(node => Math.Abs(node.Id - (34 + slice * 3)))
+                .ThenBy(node => node.Id)
+                .Take(5));
+
+            var venues = venueNodes
+                .GroupBy(node => node.Id)
+                .Select(group => group.First())
+                .Take(maxVenuesPerScenario)
+                .Select(node => new Venue(
+                    $"darp-{instanceName}-{slice:00}-{node.Id}",
+                    $"DARP node {node.Id}",
+                    "public-meeting-point",
+                    ToPublicCoordinate(node.X, node.Y, allCoordinates),
+                    4.2,
+                    100))
+                .ToList();
+
+            scenarios.Add(new BenchmarkScenario(
+                "",
+                "darp-meeting-points",
+                instanceName,
+                slice,
+                "darp_mp",
+                session,
+                venues,
+                $"Public DARP-MP instance {instanceName}, deterministic slice {slice + 1}/{slicesPerFile}."));
+        }
+
+        return scenarios;
+    }
+
+    private static IReadOnlyList<BenchmarkScenario> BuildLiLimScenarios(
+        string filePath,
+        int slicesPerFile,
+        int maxVenuesPerScenario)
+    {
+        var lines = File.ReadAllLines(filePath)
+            .Where(line => !string.IsNullOrWhiteSpace(line))
+            .ToList();
+        if (lines.Count < 3)
+            return [];
+
+        var instanceName = Path.GetFileNameWithoutExtension(filePath);
+        var nodes = lines
+            .Skip(1)
+            .Select(ParsePublicNode)
+            .ToDictionary(node => node.Id);
+        var pickupIds = nodes.Values
+            .Where(node => node.DeliveryNodeId > 0 && nodes.ContainsKey(node.DeliveryNodeId))
+            .OrderBy(node => node.Id)
+            .Select(node => node.Id)
+            .ToList();
+        var allCoordinates = nodes.Values.Select(node => (node.X, node.Y)).ToList();
+        var layout = instanceName.StartsWith("lc", StringComparison.OrdinalIgnoreCase)
+            ? "li_lim_clustered"
+            : instanceName.StartsWith("lr", StringComparison.OrdinalIgnoreCase)
+                ? "li_lim_random"
+                : "li_lim_mixed";
+        var scenarios = new List<BenchmarkScenario>();
+
+        for (var slice = 0; slice < slicesPerFile; slice++)
+        {
+            var session = new Session($"public-lilim-{instanceName}-{slice:00}");
+            var driverCount = 3;
+            var selectedDriverIds = SelectRotatingIds(pickupIds, driverCount, slice * 5);
+            var passengerPool = pickupIds
+                .Where(id => !selectedDriverIds.Contains(id))
+                .ToList();
+            var selectedPassengerIds = SelectRotatingIds(passengerPool, 6, slice * 7);
+
+            foreach (var driverId in selectedDriverIds)
+            {
+                var driverNode = nodes[driverId];
+                session.AddMember(new Member(
+                    session.Id,
+                    $"Driver {driverId}",
+                    ToPublicCoordinate(driverNode.X, driverNode.Y, allCoordinates),
+                    TransportMode.Car,
+                    MemberMobilityRole.SelfTravel));
+            }
+
+            foreach (var passengerId in selectedPassengerIds)
+            {
+                var passengerNode = nodes[passengerId];
+                var member = new Member(
+                    session.Id,
+                    $"Passenger {passengerId}",
+                    ToPublicCoordinate(passengerNode.X, passengerNode.Y, allCoordinates),
+                    TransportMode.Walking,
+                    MemberMobilityRole.NeedsPickup);
+                session.AddMember(member);
+                session.CreateOrGetPickupRequest(member.Id);
+            }
+
+            var venueNodes = selectedPassengerIds
+                .Select(id => nodes[nodes[id].DeliveryNodeId])
+                .Concat(selectedDriverIds.Select(id => nodes[nodes[id].DeliveryNodeId]))
+                .GroupBy(node => node.Id)
+                .Select(group => group.First())
+                .Take(maxVenuesPerScenario)
+                .ToList();
+            var venues = venueNodes
+                .Select(node => new Venue(
+                    $"lilim-{instanceName}-{slice:00}-{node.Id}",
+                    $"Li-Lim node {node.Id}",
+                    "public-delivery-point",
+                    ToPublicCoordinate(node.X, node.Y, allCoordinates),
+                    4.2,
+                    100))
+                .ToList();
+
+            scenarios.Add(new BenchmarkScenario(
+                "",
+                "li-lim-pdptw",
+                instanceName,
+                slice,
+                layout,
+                session,
+                venues,
+                $"Public Li-Lim PDPTW instance {instanceName}, deterministic slice {slice + 1}/{slicesPerFile}."));
+        }
+
+        return scenarios;
+    }
+
+    private static PublicNode ParsePublicNode(string line)
+    {
+        var parts = SplitPublicLine(line);
+        var pickupNodeId = parts.Length > 7 ? ParseInt(parts[7]) : 0;
+        var deliveryNodeId = parts.Length > 8 ? ParseInt(parts[8]) : 0;
+        return new PublicNode(
+            ParseInt(parts[0]),
+            ParseDouble(parts[1]),
+            ParseDouble(parts[2]),
+            parts.Length > 4 ? ParseInt(parts[4]) : 0,
+            pickupNodeId,
+            deliveryNodeId);
+    }
+
+    private static string[] SplitPublicLine(string line) =>
+        line.Split([',', '\t', ' '], StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries);
+
+    private static int ParseInt(string value) =>
+        int.Parse(value, NumberStyles.Integer, CultureInfo.InvariantCulture);
+
+    private static double ParseDouble(string value) =>
+        double.Parse(value, NumberStyles.Float, CultureInfo.InvariantCulture);
+
+    private static HashSet<int> SelectRotatingIds(int firstId, int count, int take, int offset) =>
+        SelectRotatingIds(Enumerable.Range(firstId, count).ToList(), take, offset).ToHashSet();
+
+    private static List<int> SelectRotatingIds(IReadOnlyList<int> ids, int take, int offset)
+    {
+        if (ids.Count == 0 || take <= 0)
+            return [];
+
+        return Enumerable.Range(0, Math.Min(take, ids.Count))
+            .Select(index => ids[(offset + index) % ids.Count])
+            .Distinct()
+            .ToList();
+    }
+
+    private static Coordinate ToPublicCoordinate(
+        double x,
+        double y,
+        IReadOnlyList<(double X, double Y)> allCoordinates)
+    {
+        var centerX = allCoordinates.Count == 0 ? 0 : allCoordinates.Average(point => point.X);
+        var centerY = allCoordinates.Count == 0 ? 0 : allCoordinates.Average(point => point.Y);
+        return new Coordinate(
+            PublicCoordinateAnchor.Latitude + (y - centerY) * PublicCoordinateScaleDegrees,
+            PublicCoordinateAnchor.Longitude + (x - centerX) * PublicCoordinateScaleDegrees);
     }
 
     private async Task<BenchmarkAlgorithmRunDto> RunWeightedMedianNearestDriverAsync(
@@ -276,7 +649,7 @@ public class OutingBenchmarkService : IOutingBenchmarkService
 
         foreach (var venue in scenario.Venues)
         {
-            var assignment = await BuildOrToolsAssignmentAsync(scenario.Session, venue, provider, ct);
+            var assignment = await BuildOrToolsAssignmentAsync(scenario.Session, venue, provider, ct: ct);
             var candidate = assignment == null
                 ? await BuildInfeasibleCandidateAsync(scenario.Session, venue, provider, "OR-Tools không tìm được nghiệm capacity pickup.", ct)
                 : await EvaluateDoorstepCandidateAsync(scenario.Session, venue, assignment, provider, ct);
@@ -286,28 +659,6 @@ public class OutingBenchmarkService : IOutingBenchmarkService
         stopwatch.Stop();
         var best = candidates.OrderBy(RoutingSolutionScorer.CalculatePureCost).First();
         return ToRun("ortools_pickup_cost", "OR-Tools pickup VRP cost-first", false, best, stopwatch.Elapsed.TotalMilliseconds);
-    }
-
-    private async Task<BenchmarkAlgorithmRunDto> RunOrToolsFairnessTunedAsync(
-        BenchmarkScenario scenario,
-        CancellationToken ct)
-    {
-        var stopwatch = Stopwatch.StartNew();
-        var provider = new BenchmarkRouteCostProvider(scenario.Layout);
-        var candidates = new List<CandidateResultDto>();
-
-        foreach (var venue in scenario.Venues)
-        {
-            var assignment = await BuildOrToolsAssignmentAsync(scenario.Session, venue, provider, ct);
-            var candidate = assignment == null
-                ? await BuildInfeasibleCandidateAsync(scenario.Session, venue, provider, "OR-Tools không tìm được nghiệm capacity pickup.", ct)
-                : await EvaluateDoorstepCandidateAsync(scenario.Session, venue, assignment, provider, ct);
-            candidates.Add(candidate);
-        }
-
-        stopwatch.Stop();
-        var best = SelectFairnessTunedExternalCandidate(candidates);
-        return ToRun("ortools_pickup_fair", "OR-Tools pickup VRP fairness-tuned", false, best, stopwatch.Elapsed.TotalMilliseconds);
     }
 
     private async Task<BenchmarkAlgorithmRunDto> RunPyvrpNativeCostFirstAsync(
@@ -320,10 +671,10 @@ public class OutingBenchmarkService : IOutingBenchmarkService
 
         foreach (var venue in scenario.Venues)
         {
-            var assignment = await BuildPyvrpAssignmentAsync(scenario, venue, provider, ct);
-            var candidate = assignment == null
-                ? await BuildInfeasibleCandidateAsync(scenario.Session, venue, provider, "PyVRP native không tìm được nghiệm capacity pickup.", ct)
-                : await EvaluateDoorstepCandidateAsync(scenario.Session, venue, assignment, provider, ct);
+            var result = await BuildPyvrpAssignmentAsync(scenario, venue, provider, ct: ct);
+            var candidate = result.Assignment == null
+                ? await BuildInfeasibleCandidateAsync(scenario.Session, venue, provider, result.Error ?? "PyVRP native không tìm được nghiệm capacity pickup.", ct)
+                : await EvaluateDoorstepCandidateAsync(scenario.Session, venue, result.Assignment, provider, ct);
             candidates.Add(candidate);
         }
 
@@ -332,7 +683,7 @@ public class OutingBenchmarkService : IOutingBenchmarkService
         return ToRun("pyvrp_hgs_cost", "PyVRP Hybrid Genetic Search cost-first", false, best, stopwatch.Elapsed.TotalMilliseconds);
     }
 
-    private async Task<BenchmarkAlgorithmRunDto> RunPyvrpNativeFairnessSelectedAsync(
+    private async Task<BenchmarkAlgorithmRunDto> RunOrToolsPickupCost2sAsync(
         BenchmarkScenario scenario,
         CancellationToken ct)
     {
@@ -342,16 +693,193 @@ public class OutingBenchmarkService : IOutingBenchmarkService
 
         foreach (var venue in scenario.Venues)
         {
-            var assignment = await BuildPyvrpAssignmentAsync(scenario, venue, provider, ct);
+            var assignment = await BuildOrToolsAssignmentAsync(scenario.Session, venue, provider, timeLimitMs: 2000, ct: ct);
             var candidate = assignment == null
-                ? await BuildInfeasibleCandidateAsync(scenario.Session, venue, provider, "PyVRP native không tìm được nghiệm capacity pickup.", ct)
+                ? await BuildInfeasibleCandidateAsync(scenario.Session, venue, provider, "OR-Tools 2s không tìm được nghiệm capacity pickup.", ct)
                 : await EvaluateDoorstepCandidateAsync(scenario.Session, venue, assignment, provider, ct);
             candidates.Add(candidate);
         }
 
         stopwatch.Stop();
+        var best = candidates.OrderBy(RoutingSolutionScorer.CalculatePureCost).First();
+        return ToRun("ortools_pickup_cost_2s", "OR-Tools pickup VRP cost-first 2s", false, best, stopwatch.Elapsed.TotalMilliseconds, "A");
+    }
+
+    private async Task<BenchmarkAlgorithmRunDto> RunOrToolsFairness2sAsync(
+        BenchmarkScenario scenario,
+        CancellationToken ct)
+    {
+        var stopwatch = Stopwatch.StartNew();
+        var provider = new BenchmarkRouteCostProvider(scenario.Layout);
+        var candidates = new List<CandidateResultDto>();
+
+        foreach (var venue in scenario.Venues)
+        {
+            var assignment = await BuildOrToolsAssignmentAsync(
+                scenario.Session, venue, provider, timeLimitMs: 2000, globalSpanCoefficient: 10, ct: ct);
+            var candidate = assignment == null
+                ? await BuildInfeasibleCandidateAsync(scenario.Session, venue, provider, "OR-Tools fairness 2s không tìm được nghiệm.", ct)
+                : await EvaluateOrderedDoorstepCandidateAsync(scenario.Session, venue, assignment, provider, ct);
+            candidates.Add(candidate);
+        }
+
+        stopwatch.Stop();
         var best = SelectFairnessTunedExternalCandidate(candidates);
-        return ToRun("pyvrp_hgs_fair", "PyVRP Hybrid Genetic Search fairness-selected", false, best, stopwatch.Elapsed.TotalMilliseconds);
+        return ToRun("ortools_pickup_fair_2s", "OR-Tools pickup VRP fairness 2s", false, best, stopwatch.Elapsed.TotalMilliseconds, "B");
+    }
+
+    private async Task<BenchmarkAlgorithmRunDto> RunPyvrpNativeCost2sAsync(
+        BenchmarkScenario scenario,
+        CancellationToken ct)
+    {
+        var stopwatch = Stopwatch.StartNew();
+        var provider = new BenchmarkRouteCostProvider(scenario.Layout);
+        var candidates = new List<CandidateResultDto>();
+
+        foreach (var venue in scenario.Venues)
+        {
+            var result = await BuildPyvrpAssignmentAsync(scenario, venue, provider, timeLimitSeconds: 2.0, ct: ct);
+            var candidate = result.Assignment == null
+                ? await BuildInfeasibleCandidateAsync(scenario.Session, venue, provider, result.Error ?? "PyVRP 2s không tìm được nghiệm capacity pickup.", ct)
+                : await EvaluateDoorstepCandidateAsync(scenario.Session, venue, result.Assignment, provider, ct);
+            candidates.Add(candidate);
+        }
+
+        stopwatch.Stop();
+        var best = candidates.OrderBy(RoutingSolutionScorer.CalculatePureCost).First();
+        return ToRun("pyvrp_hgs_cost_2s", "PyVRP HGS cost-first 2s", false, best, stopwatch.Elapsed.TotalMilliseconds, "A");
+    }
+
+    private async Task<BenchmarkAlgorithmRunDto> RunPyvrpNativeFairness2sAsync(
+        BenchmarkScenario scenario,
+        CancellationToken ct)
+    {
+        var stopwatch = Stopwatch.StartNew();
+        var provider = new BenchmarkRouteCostProvider(scenario.Layout);
+        var candidates = new List<CandidateResultDto>();
+
+        foreach (var venue in scenario.Venues)
+        {
+            var result = await BuildPyvrpAssignmentAsync(scenario, venue, provider, timeLimitSeconds: 2.0, ct: ct);
+            var candidate = result.Assignment == null
+                ? await BuildInfeasibleCandidateAsync(scenario.Session, venue, provider, result.Error ?? "PyVRP fairness 2s không tìm được nghiệm.", ct)
+                : await EvaluateOrderedDoorstepCandidateAsync(scenario.Session, venue, result.Assignment, provider, ct);
+            candidates.Add(candidate);
+        }
+
+        stopwatch.Stop();
+        var best = SelectFairnessTunedExternalCandidate(candidates);
+        return ToRun("pyvrp_hgs_fair_2s", "PyVRP HGS fairness 2s", false, best, stopwatch.Elapsed.TotalMilliseconds, "B");
+    }
+
+    private async Task<BenchmarkAlgorithmRunDto> RunVroomNativeCostFirstAsync(
+        BenchmarkScenario scenario,
+        CancellationToken ct)
+    {
+        var stopwatch = Stopwatch.StartNew();
+        var provider = new BenchmarkRouteCostProvider(scenario.Layout);
+        var candidates = new List<CandidateResultDto>();
+
+        foreach (var venue in scenario.Venues)
+        {
+            var result = await BuildVroomAssignmentAsync(scenario, venue, provider, ct: ct);
+            var candidate = result.Assignment == null
+                ? await BuildInfeasibleCandidateAsync(scenario.Session, venue, provider, result.Error ?? "VROOM native không tìm được nghiệm capacity pickup.", ct)
+                : await EvaluateOrderedDoorstepCandidateAsync(scenario.Session, venue, result.Assignment, provider, ct);
+            candidates.Add(candidate);
+        }
+
+        stopwatch.Stop();
+        var best = candidates.OrderBy(RoutingSolutionScorer.CalculatePureCost).First();
+        return ToRun("vroom_cost", "VROOM native cost-first", false, best, stopwatch.Elapsed.TotalMilliseconds, "A");
+    }
+
+    private async Task<BenchmarkAlgorithmRunDto> RunVroomNativeFairnessAsync(
+        BenchmarkScenario scenario,
+        CancellationToken ct)
+    {
+        var stopwatch = Stopwatch.StartNew();
+        var provider = new BenchmarkRouteCostProvider(scenario.Layout);
+        var candidates = new List<CandidateResultDto>();
+
+        foreach (var venue in scenario.Venues)
+        {
+            var result = await BuildVroomAssignmentAsync(scenario, venue, provider, ct: ct);
+            var candidate = result.Assignment == null
+                ? await BuildInfeasibleCandidateAsync(scenario.Session, venue, provider, result.Error ?? "VROOM native không tìm được nghiệm.", ct)
+                : await EvaluateOrderedDoorstepCandidateAsync(scenario.Session, venue, result.Assignment, provider, ct);
+            candidates.Add(candidate);
+        }
+
+        stopwatch.Stop();
+        var best = SelectFairnessTunedExternalCandidate(candidates);
+        return ToRun("vroom_fair", "VROOM native fairness-selected", false, best, stopwatch.Elapsed.TotalMilliseconds, "B");
+    }
+
+    private async Task<BenchmarkAlgorithmRunDto> RunOptiGoCostOnlyAsync(
+        BenchmarkScenario scenario,
+        CancellationToken ct)
+    {
+        var stopwatch = Stopwatch.StartNew();
+        var provider = new BenchmarkRouteCostProvider(scenario.Layout);
+        var traffic = new BenchmarkTrafficSnapshotProvider(scenario.Layout);
+        var planner = new HybridOutingRoutePlanner(
+            new SharedDestinationRouteOptimizer(new StopCandidateGenerator(), provider),
+            provider,
+            traffic);
+        var candidates = new List<CandidateResultDto>();
+
+        foreach (var venue in scenario.Venues)
+        {
+            try
+            {
+                candidates.Add(await planner.PlanVenueAsync(scenario.Session, venue, ct));
+            }
+            catch (InvalidOperationException ex)
+            {
+                candidates.Add(await BuildInfeasibleCandidateAsync(scenario.Session, venue, provider, ex.Message, ct));
+            }
+        }
+
+        var pool = candidates.Any(candidate => candidate.IsFeasible)
+            ? candidates.Where(candidate => candidate.IsFeasible)
+            : candidates;
+        var best = pool
+            .OrderBy(RoutingSolutionScorer.CalculatePureCost)
+            .ThenBy(RoutingSolutionScorer.CalculateFairnessScore)
+            .First();
+        stopwatch.Stop();
+        return ToRun("optigo_cost_only", "OptiGo cost-only selection", true, best, stopwatch.Elapsed.TotalMilliseconds, "A");
+    }
+
+    private async Task<BenchmarkAlgorithmRunDto> RunOptiGoNoSharedStopAsync(
+        BenchmarkScenario scenario,
+        CancellationToken ct)
+    {
+        var stopwatch = Stopwatch.StartNew();
+        var provider = new BenchmarkRouteCostProvider(scenario.Layout);
+        var traffic = new BenchmarkTrafficSnapshotProvider(scenario.Layout);
+        var planner = new HybridOutingRoutePlanner(
+            new SharedDestinationRouteOptimizer(new BenchmarkDoorstepOnlyStopCandidateGenerator(), provider),
+            provider,
+            traffic);
+        var candidates = new List<CandidateResultDto>();
+
+        foreach (var venue in scenario.Venues)
+        {
+            try
+            {
+                candidates.Add(await planner.PlanVenueAsync(scenario.Session, venue, ct));
+            }
+            catch (InvalidOperationException ex)
+            {
+                candidates.Add(await BuildInfeasibleCandidateAsync(scenario.Session, venue, provider, ex.Message, ct));
+            }
+        }
+
+        var best = SelectFairnessTunedExternalCandidate(candidates);
+        stopwatch.Stop();
+        return ToRun("optigo_no_shared_stop", "OptiGo fairness without shared-stop", true, best, stopwatch.Elapsed.TotalMilliseconds, "A");
     }
 
     private async Task<BenchmarkAlgorithmRunDto> RunOptiGoHybridAsync(
@@ -383,7 +911,7 @@ public class OutingBenchmarkService : IOutingBenchmarkService
         _ = evaluator.RankCandidates(candidates, Math.Min(3, candidates.Count));
         var best = SelectRobustOptiGoCandidate(candidates);
         stopwatch.Stop();
-        return ToRun("optigo_hybrid", "OptiGo Hybrid route-pool Pareto", true, best, stopwatch.Elapsed.TotalMilliseconds);
+        return ToRun("optigo_hybrid", "OptiGo Hybrid route-pool Pareto", true, best, stopwatch.Elapsed.TotalMilliseconds, "B");
     }
 
     private static CandidateResultDto SelectRobustOptiGoCandidate(IReadOnlyList<CandidateResultDto> candidates)
@@ -440,7 +968,9 @@ public class OutingBenchmarkService : IOutingBenchmarkService
         Session session,
         Venue venue,
         IRouteCostProvider provider,
-        CancellationToken ct)
+        int timeLimitMs = 150,
+        int globalSpanCoefficient = 1,
+        CancellationToken ct = default)
     {
         var drivers = session.Members.Where(member => member.CanOfferPickup()).ToList();
         var passengers = session.Members.Where(member => member.NeedsPickup()).ToList();
@@ -504,12 +1034,12 @@ public class OutingBenchmarkService : IOutingBenchmarkService
             true,
             "Time");
         var timeDimension = routing.GetMutableDimension("Time");
-        timeDimension.SetGlobalSpanCostCoefficient(1);
+        timeDimension.SetGlobalSpanCostCoefficient(globalSpanCoefficient);
 
         var searchParameters = operations_research_constraint_solver.DefaultRoutingSearchParameters();
         searchParameters.FirstSolutionStrategy = FirstSolutionStrategy.Types.Value.PathCheapestArc;
         searchParameters.LocalSearchMetaheuristic = LocalSearchMetaheuristic.Types.Value.GuidedLocalSearch;
-        searchParameters.TimeLimit = new Duration { Nanos = 150_000_000 };
+        searchParameters.TimeLimit = new Duration { Nanos = timeLimitMs * 1_000_000 };
 
         var solution = routing.SolveWithParameters(searchParameters);
         if (solution == null)
@@ -536,26 +1066,63 @@ public class OutingBenchmarkService : IOutingBenchmarkService
         return assignedPassengerCount == passengers.Count ? assignment : null;
     }
 
-    private async Task<Dictionary<Guid, List<Member>>?> BuildPyvrpAssignmentAsync(
+    private async Task<NativeAssignmentResult> BuildPyvrpAssignmentAsync(
         BenchmarkScenario scenario,
         Venue venue,
         IRouteCostProvider provider,
+        double timeLimitSeconds = 0.15,
+        CancellationToken ct = default)
+    {
+        return await BuildPythonNativeAssignmentAsync(
+            "pyvrp",
+            "pyvrp_solve.py",
+            scenario,
+            venue,
+            provider,
+            timeLimitSeconds,
+            ct);
+    }
+
+    private async Task<NativeAssignmentResult> BuildVroomAssignmentAsync(
+        BenchmarkScenario scenario,
+        Venue venue,
+        IRouteCostProvider provider,
+        double timeLimitSeconds = 2.0,
+        CancellationToken ct = default)
+    {
+        return await BuildPythonNativeAssignmentAsync(
+            "vroom",
+            "vroom_solve.py",
+            scenario,
+            venue,
+            provider,
+            timeLimitSeconds,
+            ct);
+    }
+
+    private async Task<NativeAssignmentResult> BuildPythonNativeAssignmentAsync(
+        string solverKey,
+        string scriptFileName,
+        BenchmarkScenario scenario,
+        Venue venue,
+        IRouteCostProvider provider,
+        double timeLimitSeconds,
         CancellationToken ct)
     {
         var drivers = scenario.Session.Members.Where(member => member.CanOfferPickup()).ToList();
         var passengers = scenario.Session.Members.Where(member => member.NeedsPickup()).ToList();
         if (drivers.Count == 0 && passengers.Count > 0)
-            return null;
+            return NativeAssignmentResult.Failed("Không có driver cho passenger cần pickup.");
 
         if (drivers.Sum(driver => driver.GetSeatCapacity()) < passengers.Count)
-            return null;
+            return NativeAssignmentResult.Failed("Không đủ tổng số ghế cho passenger cần pickup.");
 
         if (passengers.Count == 0)
-            return drivers.ToDictionary(driver => driver.Id, _ => new List<Member>());
+            return NativeAssignmentResult.Success(drivers.ToDictionary(driver => driver.Id, _ => new List<Member>()));
 
-        var scriptPath = LocateNativeBenchmarkScript("pyvrp_solve.py");
+        var scriptPath = LocateNativeBenchmarkScript(scriptFileName);
         if (scriptPath == null)
-            return null;
+            return NativeAssignmentResult.Failed($"Không tìm thấy native bridge script {scriptFileName}.");
 
         var nodes = new List<Coordinate>();
         nodes.AddRange(drivers.Select(driver => driver.GetLocation()));
@@ -571,15 +1138,15 @@ public class OutingBenchmarkService : IOutingBenchmarkService
         var workDir = Path.Combine(Path.GetTempPath(), "optigo-native-benchmarks");
         Directory.CreateDirectory(workDir);
         var prefix = $"{scenario.ScenarioId}-{venue.Id}-{Guid.NewGuid():N}";
-        var inputPath = Path.Combine(workDir, $"{prefix}-pyvrp-input.json");
-        var outputPath = Path.Combine(workDir, $"{prefix}-pyvrp-output.json");
+        var inputPath = Path.Combine(workDir, $"{prefix}-{solverKey}-input.json");
+        var outputPath = Path.Combine(workDir, $"{prefix}-{solverKey}-output.json");
 
         var payload = new
         {
             scenarioId = scenario.ScenarioId,
             venueId = venue.Id,
-            seed = Math.Abs(HashCode.Combine(scenario.ScenarioId, venue.Id)),
-            timeLimitSeconds = 0.15,
+            seed = StableNativeSeed(scenario.ScenarioId, venue.Id),
+            timeLimitSeconds,
             serviceSeconds = RoutingDefaults.BasePickupServiceSeconds + RoutingDefaults.BoardingServiceSecondsPerPassenger,
             venueNode,
             nodes = nodes.Select((node, index) => new
@@ -609,7 +1176,7 @@ public class OutingBenchmarkService : IOutingBenchmarkService
         {
             var startInfo = new ProcessStartInfo
             {
-                FileName = "python",
+                FileName = ResolvePythonExecutable(),
                 UseShellExecute = false,
                 RedirectStandardError = true,
                 RedirectStandardOutput = true
@@ -620,26 +1187,37 @@ public class OutingBenchmarkService : IOutingBenchmarkService
 
             using var process = Process.Start(startInfo);
             if (process == null)
-                return null;
+                return NativeAssignmentResult.Failed($"{solverKey} bridge process could not start.");
 
             var waitForExit = process.WaitForExitAsync(ct);
-            var timeout = Task.Delay(TimeSpan.FromSeconds(12), ct);
+            var stdoutTask = process.StandardOutput.ReadToEndAsync(ct);
+            var stderrTask = process.StandardError.ReadToEndAsync(ct);
+            var timeout = Task.Delay(TimeSpan.FromSeconds(Math.Max(12, timeLimitSeconds * 5 + 5)), ct);
             var completedTask = await Task.WhenAny(waitForExit, timeout);
             if (completedTask != waitForExit)
             {
                 TryKill(process);
-                return null;
+                PreserveNativeFailure(inputPath, outputPath, solverKey, "timeout", "", "");
+                return NativeAssignmentResult.Failed($"{solverKey} bridge timed out after {Math.Max(12, timeLimitSeconds * 5 + 5):0}s.");
             }
 
+            var stdout = await stdoutTask;
+            var stderr = await stderrTask;
             if (process.ExitCode != 0 || !File.Exists(outputPath))
-                return null;
+            {
+                PreserveNativeFailure(inputPath, outputPath, solverKey, $"exit-{process.ExitCode}", stdout, stderr);
+                return NativeAssignmentResult.Failed($"{solverKey} bridge failed: {TrimNativeError(stderr, stdout)}");
+            }
 
             var outputJson = await File.ReadAllTextAsync(outputPath, ct);
             var output = JsonSerializer.Deserialize<PyvrpOutputDto>(
                 outputJson,
                 new JsonSerializerOptions { PropertyNameCaseInsensitive = true });
             if (output is not { IsFeasible: true })
-                return null;
+            {
+                PreserveNativeFailure(inputPath, outputPath, solverKey, "infeasible", stdout, stderr);
+                return NativeAssignmentResult.Failed(output?.BridgeError ?? $"{solverKey} bridge returned no feasible assignment.");
+            }
 
             var assignment = drivers.ToDictionary(driver => driver.Id, _ => new List<Member>());
             foreach (var route in output.Routes)
@@ -658,7 +1236,9 @@ public class OutingBenchmarkService : IOutingBenchmarkService
             }
 
             var assignedPassengerCount = assignment.Values.Sum(passengerList => passengerList.Count);
-            return assignedPassengerCount == passengers.Count ? assignment : null;
+            return assignedPassengerCount == passengers.Count
+                ? NativeAssignmentResult.Success(assignment)
+                : NativeAssignmentResult.Failed($"{solverKey} assignment covered {assignedPassengerCount}/{passengers.Count} pickup passengers.");
         }
         finally
         {
@@ -825,6 +1405,100 @@ public class OutingBenchmarkService : IOutingBenchmarkService
         };
     }
 
+    /// <summary>
+    /// Like EvaluateDoorstepCandidateAsync but preserves the solver's passenger visit order.
+    /// Used by Group B algorithms where OR-Tools/PyVRP routing order should be respected.
+    /// </summary>
+    private async Task<CandidateResultDto> EvaluateOrderedDoorstepCandidateAsync(
+        Session session,
+        Venue venue,
+        IReadOnlyDictionary<Guid, List<Member>> orderedPassengersByDriver,
+        IRouteCostProvider provider,
+        CancellationToken ct)
+    {
+        var memberRoutes = new List<MemberRouteDto>();
+        var driverRoutes = new List<DriverRouteDto>();
+        var breakdown = new RouteScoreBreakdownDto();
+        var assignedPassengerIds = orderedPassengersByDriver.Values
+            .SelectMany(passengers => passengers.Select(passenger => passenger.Id))
+            .ToHashSet();
+
+        foreach (var driver in session.Members.Where(member => member.CanOfferPickup()))
+        {
+            orderedPassengersByDriver.TryGetValue(driver.Id, out var passengers);
+            passengers ??= [];
+            // Key difference: pass passengers in solver-provided order, skip TSP re-solve
+            var result = await BuildOrderedDoorstepDriverResultAsync(driver, passengers, venue, provider, ct);
+            driverRoutes.Add(result.DriverRoute);
+            memberRoutes.Add(new MemberRouteDto
+            {
+                MemberId = driver.Id,
+                MemberName = driver.Name,
+                EstimatedTimeSeconds = result.DriverRoute.TotalTimeSeconds,
+                DistanceMeters = result.DriverRoute.TotalDistanceMeters,
+                RideDistanceMeters = result.DriverRoute.TotalDistanceMeters,
+                RideTimeSeconds = result.DriverRoute.TotalTimeSeconds,
+                DriverId = driver.Id,
+                BurdenScore = result.DriverRoute.GeneralizedCostSeconds
+            });
+            memberRoutes.AddRange(result.PassengerRoutes);
+            AddBreakdown(breakdown, result.CostBreakdown);
+        }
+
+        foreach (var member in session.Members.Where(member => !member.CanOfferPickup() && !assignedPassengerIds.Contains(member.Id)))
+        {
+            var route = await provider.GetExactRouteAsync(member.GetLocation(), venue.GetLocation(), member.TransportMode, ct: ct);
+            memberRoutes.Add(new MemberRouteDto
+            {
+                MemberId = member.Id,
+                MemberName = member.Name,
+                EstimatedTimeSeconds = route.DurationSeconds,
+                DistanceMeters = route.DistanceMeters,
+                RideDistanceMeters = route.DistanceMeters,
+                RideTimeSeconds = route.DurationSeconds,
+                DriverId = null,
+                BurdenScore = route.DurationSeconds
+            });
+            breakdown.GeneralizedCostSeconds += route.DurationSeconds;
+            breakdown.TotalDriveSeconds += route.DurationSeconds;
+        }
+
+        breakdown.VenueQualityBonusSeconds = RoutingSolutionScorer.CalculateVenueQualityBonusSeconds(venue);
+        breakdown.GeneralizedCostSeconds = Math.Max(0, breakdown.GeneralizedCostSeconds - breakdown.VenueQualityBonusSeconds);
+        var metrics = RoutingSolutionScorer.BuildMetrics(venue, memberRoutes, driverRoutes);
+        var issues = RoutingSolutionScorer.ValidateSolution(session, memberRoutes, driverRoutes, metrics);
+        var unassignedPickupCount = session.Members.Count(member => member.NeedsPickup() && !assignedPassengerIds.Contains(member.Id));
+        if (unassignedPickupCount > 0)
+        {
+            issues.Add($"{unassignedPickupCount} passenger cần pickup không được gán driver.");
+        }
+
+        if (issues.Count > 0)
+        {
+            breakdown.GeneralizedCostSeconds += issues.Count * RoutingDefaults.FeasibilityIssuePenaltySeconds;
+        }
+
+        return new CandidateResultDto
+        {
+            VenueId = venue.Id,
+            Name = venue.Name,
+            Category = venue.Category,
+            Latitude = venue.Latitude,
+            Longitude = venue.Longitude,
+            Rating = venue.Rating,
+            ReviewCount = venue.ReviewCount,
+            TotalTimeSeconds = metrics.TotalGroupTimeSeconds,
+            MaxDriverDetourSeconds = metrics.MaxDriverDetourSeconds,
+            TotalWalkingDistanceMeters = memberRoutes.Sum(route => route.WalkingDistanceMeters),
+            IsFeasible = issues.Count == 0,
+            FeasibilityIssues = issues.Distinct(StringComparer.Ordinal).ToList(),
+            Metrics = metrics,
+            ScoreBreakdown = breakdown,
+            MemberRoutes = memberRoutes,
+            DriverRoutes = driverRoutes
+        };
+    }
+
     private async Task<DriverOptimizationResult> BuildDoorstepDriverResultAsync(
         Member driver,
         IReadOnlyList<Member> passengers,
@@ -836,6 +1510,140 @@ public class OutingBenchmarkService : IOutingBenchmarkService
         var destination = venue.GetLocation();
         var direct = await provider.GetExactRouteAsync(origin, destination, driver.TransportMode, ct: ct);
         var orderedPassengers = await SolveDoorstepOrderAsync(driver, passengers, venue, provider, ct);
+        var stops = new List<RouteStopDto>
+        {
+            new()
+            {
+                Sequence = 0,
+                StopType = "driver_origin",
+                Label = driver.Name,
+                Latitude = driver.Latitude,
+                Longitude = driver.Longitude,
+                StopAccessType = "origin"
+            }
+        };
+        var snapshots = new Dictionary<Guid, (double Eta, double Distance, double Wait)>();
+        var current = origin;
+        var elapsed = 0.0;
+        var distance = 0.0;
+        var waitTotal = 0.0;
+
+        foreach (var passenger in orderedPassengers)
+        {
+            var route = await provider.GetExactRouteAsync(current, passenger.GetLocation(), driver.TransportMode, ct: ct);
+            elapsed += route.DurationSeconds;
+            distance += route.DistanceMeters;
+            current = passenger.GetLocation();
+            var wait = EstimateBenchmarkWaitSeconds(elapsed);
+            waitTotal += wait;
+            snapshots[passenger.Id] = (elapsed, distance, wait);
+            stops.Add(new RouteStopDto
+            {
+                Sequence = stops.Count,
+                StopType = "pickup",
+                Label = passenger.Name,
+                Latitude = passenger.Latitude,
+                Longitude = passenger.Longitude,
+                EtaSeconds = elapsed,
+                DistanceFromPreviousMeters = route.DistanceMeters,
+                CumulativeDistanceMeters = distance,
+                CumulativeTimeSeconds = elapsed,
+                WaitSeconds = wait,
+                ServiceTimeSeconds = RoutingDefaults.BasePickupServiceSeconds + RoutingDefaults.BoardingServiceSecondsPerPassenger,
+                StopAccessType = "doorstep",
+                PassengerIds = [passenger.Id]
+            });
+            elapsed += RoutingDefaults.BasePickupServiceSeconds + RoutingDefaults.BoardingServiceSecondsPerPassenger;
+        }
+
+        var finalLeg = await provider.GetExactRouteAsync(current, destination, driver.TransportMode, ct: ct);
+        elapsed += finalLeg.DurationSeconds;
+        distance += finalLeg.DistanceMeters;
+        stops.Add(new RouteStopDto
+        {
+            Sequence = stops.Count,
+            StopType = "destination",
+            Label = venue.Name,
+            Latitude = venue.Latitude,
+            Longitude = venue.Longitude,
+            EtaSeconds = elapsed,
+            DistanceFromPreviousMeters = finalLeg.DistanceMeters,
+            CumulativeDistanceMeters = distance,
+            CumulativeTimeSeconds = elapsed,
+            StopAccessType = "destination"
+        });
+
+        var passengerRoutes = orderedPassengers.Select(passenger =>
+        {
+            var snapshot = snapshots[passenger.Id];
+            var rideTime = Math.Max(0, elapsed - snapshot.Eta);
+            var rideDistance = Math.Max(0, distance - snapshot.Distance);
+            return new MemberRouteDto
+            {
+                MemberId = passenger.Id,
+                MemberName = passenger.Name,
+                EstimatedTimeSeconds = rideTime + snapshot.Wait,
+                DistanceMeters = rideDistance,
+                RideDistanceMeters = rideDistance,
+                RideTimeSeconds = rideTime,
+                WaitTimeSeconds = snapshot.Wait,
+                DriverId = driver.Id,
+                BurdenScore = rideTime + snapshot.Wait * RoutingDefaults.WaitWeight
+            };
+        }).ToList();
+        var detour = Math.Max(0, elapsed - direct.DurationSeconds);
+        var fairness = ComputeStd(passengerRoutes.Select(route => route.BurdenScore).ToList()) * RoutingDefaults.FairnessWeight;
+        var generalizedCost =
+            elapsed +
+            waitTotal * RoutingDefaults.WaitWeight +
+            detour * RoutingDefaults.DetourWeight +
+            fairness +
+            orderedPassengers.Count * RoutingDefaults.StopComplexityWeight;
+
+        return new DriverOptimizationResult
+        {
+            DriverRoute = new DriverRouteDto
+            {
+                DriverId = driver.Id,
+                DriverName = driver.Name,
+                TotalTimeSeconds = elapsed,
+                TotalDistanceMeters = distance,
+                DirectTimeSeconds = direct.DurationSeconds,
+                DirectDistanceMeters = direct.DistanceMeters,
+                GeneralizedCostSeconds = generalizedCost,
+                PassengerIds = orderedPassengers.Select(passenger => passenger.Id).ToList(),
+                Stops = stops,
+                RoutePolyline = [new RoutePointDto { Latitude = origin.Latitude, Longitude = origin.Longitude }, new RoutePointDto { Latitude = destination.Latitude, Longitude = destination.Longitude }]
+            },
+            PassengerRoutes = passengerRoutes,
+            CostBreakdown = new RouteScoreBreakdownDto
+            {
+                GeneralizedCostSeconds = generalizedCost,
+                TotalDriveSeconds = elapsed,
+                TotalWaitSeconds = waitTotal,
+                DetourPenaltySeconds = detour * RoutingDefaults.DetourWeight,
+                FairnessPenaltySeconds = fairness,
+                StopComplexityPenaltySeconds = orderedPassengers.Count * RoutingDefaults.StopComplexityWeight
+            }
+        };
+    }
+
+    /// <summary>
+    /// Like BuildDoorstepDriverResultAsync but uses passengers in the provided order
+    /// (from external solver) instead of calling SolveDoorstepOrderAsync.
+    /// </summary>
+    private async Task<DriverOptimizationResult> BuildOrderedDoorstepDriverResultAsync(
+        Member driver,
+        IReadOnlyList<Member> passengers,
+        Venue venue,
+        IRouteCostProvider provider,
+        CancellationToken ct)
+    {
+        var origin = driver.GetLocation();
+        var destination = venue.GetLocation();
+        var direct = await provider.GetExactRouteAsync(origin, destination, driver.TransportMode, ct: ct);
+        // Use passengers in given order directly (solver's order)
+        var orderedPassengers = passengers;
         var stops = new List<RouteStopDto>
         {
             new()
@@ -1082,12 +1890,14 @@ public class OutingBenchmarkService : IOutingBenchmarkService
         string algorithmName,
         bool isOptiGo,
         CandidateResultDto candidate,
-        double computeTimeMs) =>
+        double computeTimeMs,
+        string benchmarkGroup = "A") =>
         new()
         {
             AlgorithmKey = algorithmKey,
             AlgorithmName = algorithmName,
             IsOptiGo = isOptiGo,
+            BenchmarkGroup = benchmarkGroup,
             SelectedVenueId = candidate.VenueId,
             SelectedVenueName = candidate.Name,
             IsFeasible = candidate.IsFeasible,
@@ -1115,32 +1925,42 @@ public class OutingBenchmarkService : IOutingBenchmarkService
 
     private static void ApplyExternalGaps(IReadOnlyList<BenchmarkAlgorithmRunDto> runs)
     {
-        var bestExternal = runs
-            .Where(run => !run.IsOptiGo && run.IsFeasible)
-            .OrderBy(run => run.ObjectiveSeconds)
-            .FirstOrDefault();
-        var bestCostExternal = runs
-            .Where(run => !run.IsOptiGo && run.IsFeasible)
-            .OrderBy(run => run.PureCostSeconds)
-            .FirstOrDefault();
-
-        foreach (var run in runs)
+        // Compute gaps within the same benchmark group for fair comparison
+        foreach (var groupRuns in runs.GroupBy(run => run.BenchmarkGroup))
         {
-            if (bestExternal != null)
-            {
-                run.GapToBestExternalPercent = bestExternal.ObjectiveSeconds <= 0
-                    ? 0
-                    : (run.ObjectiveSeconds - bestExternal.ObjectiveSeconds) / bestExternal.ObjectiveSeconds * 100;
-            }
+            var groupRunList = groupRuns.ToList();
+            var bestExternal = groupRunList
+                .Where(run => !run.IsOptiGo && run.IsFeasible)
+                .OrderBy(run => run.ObjectiveSeconds)
+                .FirstOrDefault();
+            var bestCostExternal = groupRunList
+                .Where(run => !run.IsOptiGo && run.IsFeasible)
+                .OrderBy(run => run.PureCostSeconds)
+                .FirstOrDefault();
 
-            if (bestCostExternal != null)
+            foreach (var run in groupRunList)
             {
-                run.CostGapToBestExternalPercent = bestCostExternal.PureCostSeconds <= 0
-                    ? 0
-                    : (run.PureCostSeconds - bestCostExternal.PureCostSeconds) / bestCostExternal.PureCostSeconds * 100;
-                run.FairnessGainVsBestCostExternalPercent = bestCostExternal.FairnessScoreSeconds <= 0
-                    ? 0
-                    : (bestCostExternal.FairnessScoreSeconds - run.FairnessScoreSeconds) / bestCostExternal.FairnessScoreSeconds * 100;
+                if (bestExternal != null)
+                {
+                    run.GapToBestExternalPercent = bestExternal.ObjectiveSeconds <= 0
+                        ? 0
+                        : (run.ObjectiveSeconds - bestExternal.ObjectiveSeconds) / bestExternal.ObjectiveSeconds * 100;
+                }
+
+                if (bestCostExternal != null)
+                {
+                    var costGuard = bestCostExternal.PureCostSeconds * FairnessCostGuardRatio + FairnessCostGuardSlackSeconds;
+                    run.CostGapToBestExternalPercent = bestCostExternal.PureCostSeconds <= 0
+                        ? 0
+                        : (run.PureCostSeconds - bestCostExternal.PureCostSeconds) / bestCostExternal.PureCostSeconds * 100;
+                    run.FairnessGainVsBestCostExternalPercent = bestCostExternal.FairnessScoreSeconds <= 0
+                        ? 0
+                        : (bestCostExternal.FairnessScoreSeconds - run.FairnessScoreSeconds) / bestCostExternal.FairnessScoreSeconds * 100;
+                    run.CostGuardPassed = run.IsFeasible && run.PureCostSeconds <= costGuard;
+                    run.FairnessGainWithinGuardPercent = run.CostGuardPassed
+                        ? run.FairnessGainVsBestCostExternalPercent
+                        : 0;
+                }
             }
         }
     }
@@ -1153,6 +1973,9 @@ public class OutingBenchmarkService : IOutingBenchmarkService
         return new BenchmarkScenarioResultDto
         {
             ScenarioId = scenario.ScenarioId,
+            DatasetName = scenario.DatasetName,
+            InstanceName = scenario.InstanceName,
+            ScenarioSlice = scenario.ScenarioSlice,
             Layout = scenario.Layout,
             MemberCount = scenario.Session.Members.Count,
             DriverCount = scenario.Session.Members.Count(member => member.CanOfferPickup()),
@@ -1204,7 +2027,7 @@ public class OutingBenchmarkService : IOutingBenchmarkService
         IReadOnlyList<BenchmarkAlgorithmRunDto> runs)
     {
         var bestByScenario = runs
-            .GroupBy(run => run.ScenarioId)
+            .GroupBy(run => (run.ScenarioId, run.BenchmarkGroup))
             .ToDictionary(
                 group => group.Key,
                 group => group
@@ -1213,14 +2036,14 @@ public class OutingBenchmarkService : IOutingBenchmarkService
                     .First());
 
         return runs
-            .GroupBy(run => new { run.AlgorithmKey, run.AlgorithmName, run.IsOptiGo })
+            .GroupBy(run => new { run.AlgorithmKey, run.AlgorithmName, run.IsOptiGo, run.BenchmarkGroup })
             .Select(group =>
             {
                 var groupRuns = group.ToList();
                 var serviceableRuns = groupRuns.Where(run => run.IsScenarioServiceable).ToList();
                 var metricRuns = serviceableRuns.Count > 0 ? serviceableRuns : groupRuns;
                 var wins = metricRuns.Count(run =>
-                    bestByScenario.TryGetValue(run.ScenarioId, out var best) &&
+                    bestByScenario.TryGetValue((run.ScenarioId, run.BenchmarkGroup), out var best) &&
                     IsTiedWithBest(run, best));
 
                 return new BenchmarkAlgorithmAggregateDto
@@ -1228,6 +2051,7 @@ public class OutingBenchmarkService : IOutingBenchmarkService
                     AlgorithmKey = group.Key.AlgorithmKey,
                     AlgorithmName = group.Key.AlgorithmName,
                     IsOptiGo = group.Key.IsOptiGo,
+                    BenchmarkGroup = group.Key.BenchmarkGroup,
                     Runs = groupRuns.Count,
                     ServiceableRuns = serviceableRuns.Count,
                     FeasibleRate = groupRuns.Count == 0 ? 0 : groupRuns.Count(run => run.IsFeasible) / (double)groupRuns.Count,
@@ -1254,7 +2078,8 @@ public class OutingBenchmarkService : IOutingBenchmarkService
                     AverageComputeTimeMs = metricRuns.Average(run => run.ComputeTimeMs)
                 };
             })
-            .OrderBy(aggregate => aggregate.IsOptiGo ? 0 : 1)
+            .OrderBy(aggregate => aggregate.BenchmarkGroup)
+            .ThenBy(aggregate => aggregate.IsOptiGo ? 0 : 1)
             .ThenBy(aggregate => aggregate.AverageObjectiveSeconds)
             .ToList();
     }
@@ -1276,7 +2101,8 @@ public class OutingBenchmarkService : IOutingBenchmarkService
         var weaknesses = new List<BenchmarkWeaknessDto>();
         foreach (var scenario in scenarios)
         {
-            var optigo = scenario.Runs.First(run => run.IsOptiGo);
+            var optigo = scenario.Runs.FirstOrDefault(run => run.AlgorithmKey == "optigo_hybrid")
+                ?? scenario.Runs.First(run => run.IsOptiGo);
             var externalRuns = scenario.Runs.Where(run => !run.IsOptiGo && run.IsFeasible).ToList();
             if (externalRuns.Count == 0)
                 continue;
@@ -1505,6 +2331,203 @@ public class OutingBenchmarkService : IOutingBenchmarkService
         return null;
     }
 
+    private static string ResolvePythonExecutable() => BenchmarkPythonExecutable.Value;
+
+    private static string ResolvePythonExecutableCore()
+    {
+        var explicitPython =
+            Environment.GetEnvironmentVariable("PYVRP_PYTHON")
+            ?? Environment.GetEnvironmentVariable("OPTIGO_BENCHMARK_PYTHON");
+        if (!string.IsNullOrWhiteSpace(explicitPython))
+            return explicitPython;
+
+        foreach (var candidate in GetPythonExecutableCandidates())
+        {
+            if (CanImportPythonModule(candidate, "pyvrp"))
+                return candidate;
+        }
+
+        return "python";
+    }
+
+    private static IEnumerable<string> GetPythonExecutableCandidates()
+    {
+        var seen = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+
+        foreach (var candidate in GetPythonExecutablesFromLauncher())
+        {
+            if (seen.Add(candidate))
+                yield return candidate;
+        }
+
+        foreach (var candidate in GetExecutablesFromPath("python"))
+        {
+            if (seen.Add(candidate))
+                yield return candidate;
+        }
+
+        foreach (var candidate in GetExecutablesFromPath("python3"))
+        {
+            if (seen.Add(candidate))
+                yield return candidate;
+        }
+
+        foreach (var candidate in new[] { @"C:\Python314\python.exe", @"C:\Python313\python.exe", "python", "python3" })
+        {
+            if (seen.Add(candidate))
+                yield return candidate;
+        }
+    }
+
+    private static IEnumerable<string> GetPythonExecutablesFromLauncher()
+    {
+        if (!OperatingSystem.IsWindows())
+            yield break;
+
+        var output = RunShortProcess("py", ["-0p"]);
+        if (string.IsNullOrWhiteSpace(output))
+            yield break;
+
+        foreach (var line in output.Split('\n', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries))
+        {
+            var driveSeparatorIndex = line.IndexOf(@":\", StringComparison.Ordinal);
+            if (driveSeparatorIndex <= 0)
+                continue;
+
+            var path = line[(driveSeparatorIndex - 1)..].Trim();
+            if (File.Exists(path))
+                yield return path;
+        }
+    }
+
+    private static IEnumerable<string> GetExecutablesFromPath(string executableName)
+    {
+        var command = OperatingSystem.IsWindows() ? "where" : "which";
+        var output = RunShortProcess(command, [executableName]);
+        if (string.IsNullOrWhiteSpace(output))
+            yield break;
+
+        foreach (var line in output.Split('\n', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries))
+        {
+            var path = line.Trim();
+            if (path.Length > 0)
+                yield return path;
+        }
+    }
+
+    private static bool CanImportPythonModule(string pythonExecutable, string moduleName)
+    {
+        var output = RunShortProcess(pythonExecutable, ["-c", $"import {moduleName}"], timeoutMilliseconds: 3000);
+        return output != null;
+    }
+
+    private static string? RunShortProcess(string fileName, IReadOnlyList<string> arguments, int timeoutMilliseconds = 2000)
+    {
+        try
+        {
+            var startInfo = new ProcessStartInfo
+            {
+                FileName = fileName,
+                UseShellExecute = false,
+                RedirectStandardError = true,
+                RedirectStandardOutput = true,
+                CreateNoWindow = true
+            };
+
+            foreach (var argument in arguments)
+            {
+                startInfo.ArgumentList.Add(argument);
+            }
+
+            using var process = Process.Start(startInfo);
+            if (process == null)
+                return null;
+
+            if (!process.WaitForExit(timeoutMilliseconds))
+            {
+                TryKill(process);
+                return null;
+            }
+
+            var stdout = process.StandardOutput.ReadToEnd();
+            var stderr = process.StandardError.ReadToEnd();
+            return process.ExitCode == 0 ? stdout : null;
+        }
+        catch
+        {
+            return null;
+        }
+    }
+
+    private static string TrimNativeError(string stderr, string stdout)
+    {
+        var message = string.IsNullOrWhiteSpace(stderr) ? stdout : stderr;
+        message = string.IsNullOrWhiteSpace(message) ? "no stderr/stdout" : message.Trim();
+        return message.Length <= 500 ? message : message[..500];
+    }
+
+    private static int StableNativeSeed(string scenarioId, string venueId)
+    {
+        unchecked
+        {
+            var hash = 2166136261u;
+            foreach (var ch in $"{scenarioId}:{venueId}")
+            {
+                hash ^= ch;
+                hash *= 16777619u;
+            }
+
+            return (int)(hash & 0x7fffffff);
+        }
+    }
+
+    private static void PreserveNativeFailure(
+        string inputPath,
+        string outputPath,
+        string solverKey,
+        string reason,
+        string stdout,
+        string stderr)
+    {
+        try
+        {
+            var root = FindRepositoryRoot() ?? Directory.GetCurrentDirectory();
+            var failureDir = Path.Combine(root, ".buildtmp", "native-failures", solverKey);
+            Directory.CreateDirectory(failureDir);
+            var prefix = $"{DateTimeOffset.UtcNow:yyyyMMddHHmmssfff}-{reason}-{Path.GetFileNameWithoutExtension(inputPath)}";
+            if (File.Exists(inputPath))
+            {
+                File.Copy(inputPath, Path.Combine(failureDir, $"{prefix}.input.json"), overwrite: true);
+            }
+
+            if (File.Exists(outputPath))
+            {
+                File.Copy(outputPath, Path.Combine(failureDir, $"{prefix}.output.json"), overwrite: true);
+            }
+
+            File.WriteAllText(Path.Combine(failureDir, $"{prefix}.stderr.txt"), stderr);
+            File.WriteAllText(Path.Combine(failureDir, $"{prefix}.stdout.txt"), stdout);
+        }
+        catch
+        {
+            // Best-effort diagnostics only.
+        }
+    }
+
+    private static string? FindRepositoryRoot()
+    {
+        var current = new DirectoryInfo(Directory.GetCurrentDirectory());
+        while (current != null)
+        {
+            if (Directory.Exists(Path.Combine(current.FullName, ".git")))
+                return current.FullName;
+
+            current = current.Parent;
+        }
+
+        return null;
+    }
+
     private static void TryKill(Process process)
     {
         try
@@ -1538,6 +2561,7 @@ public class OutingBenchmarkService : IOutingBenchmarkService
     private sealed class PyvrpOutputDto
     {
         public bool IsFeasible { get; init; }
+        public string? BridgeError { get; init; }
         public List<PyvrpRouteDto> Routes { get; init; } = [];
     }
 
@@ -1547,12 +2571,58 @@ public class OutingBenchmarkService : IOutingBenchmarkService
         public List<int> PassengerIndices { get; init; } = [];
     }
 
+    private sealed record NativeAssignmentResult(
+        Dictionary<Guid, List<Member>>? Assignment,
+        string? Error)
+    {
+        public static NativeAssignmentResult Success(Dictionary<Guid, List<Member>> assignment) =>
+            new(assignment, null);
+
+        public static NativeAssignmentResult Failed(string error) =>
+            new(null, error);
+    }
+
     private sealed record BenchmarkScenario(
         string ScenarioId,
+        string DatasetName,
+        string InstanceName,
+        int ScenarioSlice,
         string Layout,
         Session Session,
         IReadOnlyList<Venue> Venues,
         string Description);
+
+    private sealed record PublicNode(
+        int Id,
+        double X,
+        double Y,
+        int Demand,
+        int PickupNodeId,
+        int DeliveryNodeId);
+
+    private sealed class BenchmarkDoorstepOnlyStopCandidateGenerator : IStopCandidateGenerator
+    {
+        public Task<IReadOnlyList<StopCandidate>> GenerateAsync(
+            DriverOptimizationInput input,
+            CancellationToken ct = default)
+        {
+            IReadOnlyList<StopCandidate> candidates = input.Passengers
+                .Select(passenger => new StopCandidate
+                {
+                    CandidateId = $"{passenger.Id}:doorstep-only",
+                    StopLocation = passenger.GetLocation(),
+                    Label = passenger.Name,
+                    StopAccessType = "doorstep",
+                    PassengerIds = [passenger.Id],
+                    WalkingDistancesMeters = new Dictionary<Guid, double> { [passenger.Id] = 0 },
+                    AccessPenaltySeconds = 0,
+                    RiskPenaltySeconds = 0
+                })
+                .ToList();
+
+            return Task.FromResult(candidates);
+        }
+    }
 
     private sealed class BenchmarkTrafficSnapshotProvider : ITrafficSnapshotProvider
     {

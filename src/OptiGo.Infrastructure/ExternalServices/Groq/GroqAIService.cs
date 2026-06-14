@@ -525,7 +525,11 @@ public class GroqAIService : IAIService
             - Do NOT explain.
             - Do NOT output anything except the type string.
             - If multiple types match, choose the most specific one.
-            - If no type clearly matches, return: point_of_interest.
+            - If the query names a dish or food style with no exact type, choose the closest cuisine restaurant type.
+            - For Vietnamese dishes or casual Vietnamese food places, return: vietnamese_restaurant.
+            - For generic food queries with no clearer match, return: restaurant.
+            - For generic drink or dessert queries, return: cafe.
+            - Never return point_of_interest.
 
             Examples:
             Query: quán cà phê
@@ -536,6 +540,12 @@ public class GroqAIService : IAIService
 
             Query: nhà hàng hải sản
             Output: seafood_restaurant
+
+            Query: quán ếch
+            Output: vietnamese_restaurant
+
+            Query: bún đậu
+            Output: vietnamese_restaurant
 
             Query: quán bar
             Output: bar
@@ -550,7 +560,7 @@ public class GroqAIService : IAIService
             Output: movie_theater
 
             Allowed place types:
-            {ValidCategories}
+            {CategoriesForPrompt}
 
             Output:
             """;
@@ -558,7 +568,7 @@ public class GroqAIService : IAIService
         try
         {
             var content = await CreateChatCompletionAsync(prompt, cancellationToken);
-            var category = (content ?? string.Empty).Trim().ToLowerInvariant();
+            var category = NormalizeCategoryCandidate(content);
 
             if (ValidCategories.Contains(category))
             {
@@ -574,6 +584,28 @@ public class GroqAIService : IAIService
             _logger.LogError(ex, "Groq resolve category failed for query '{Query}'. Falling back to 'cafe'.", query);
             return "cafe";
         }
+    }
+
+    private static string NormalizeCategoryCandidate(string? content)
+    {
+        var normalized = (content ?? string.Empty)
+            .Trim()
+            .Trim('`', '"', '\'')
+            .Trim()
+            .ToLowerInvariant();
+
+        foreach (var token in normalized.Split(
+            ['\r', '\n', ' ', '\t', ',', ';', '.'],
+            StringSplitOptions.RemoveEmptyEntries))
+        {
+            var candidate = token.Trim('`', '"', '\'', ':');
+            if (ValidCategories.Contains(candidate))
+            {
+                return candidate;
+            }
+        }
+
+        return normalized;
     }
 
     public async Task<string> SummarizeReviewsAsync(IEnumerable<string> reviews, CancellationToken ct = default)

@@ -24,7 +24,7 @@ public class RouteAwareVenuePrefilter : IVenuePrefilter
         int topN = 15,
         CancellationToken ct = default)
     {
-        if (rawVenues.Count <= topN)
+        if (rawVenues.Count < topN)
             return rawVenues;
 
         var trafficSnapshot = _trafficSnapshotProvider.GetCurrentSnapshot();

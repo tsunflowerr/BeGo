@@ -12,8 +12,8 @@ public class FindMeetPointCommandValidator : AbstractValidator<FindMeetPointComm
             .WithMessage("ID phiên không được để trống");
 
         RuleFor(x => x.Category)
-            .MaximumLength(100)
-            .WithMessage("Danh mục không được vượt quá 100 ký tự")
+            .MaximumLength(500)
+            .WithMessage("Yêu cầu tìm kiếm không được vượt quá 500 ký tự")
             .When(x => !string.IsNullOrEmpty(x.Category));
     }
 }

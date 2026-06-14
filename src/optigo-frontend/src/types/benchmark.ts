@@ -51,6 +51,9 @@ export interface BenchmarkVenue {
 
 export interface BenchmarkAlgorithmRun {
   scenarioId: string;
+  datasetName: string;
+  instanceName: string;
+  scenarioSlice: number;
   algorithmKey: string;
   algorithmName: string;
   isOptiGo: boolean;
@@ -81,10 +84,15 @@ export interface BenchmarkAlgorithmRun {
   gapToBestExternalPercent: number;
   costGapToBestExternalPercent: number;
   fairnessGainVsBestCostExternalPercent: number;
+  costGuardPassed: boolean;
+  fairnessGainWithinGuardPercent: number;
 }
 
 export interface BenchmarkScenarioResult {
   scenarioId: string;
+  datasetName: string;
+  instanceName: string;
+  scenarioSlice: number;
   layout: string;
   memberCount: number;
   driverCount: number;

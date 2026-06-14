@@ -25,6 +25,17 @@ public static class WeightedGeometricMedianCalculator
             .Select(member => new WeightedPoint(member.GetLocation(), GetMemberWeight(member)))
             .ToList();
 
+        return Calculate(weightedPoints);
+    }
+
+    public static Coordinate Calculate(IReadOnlyList<WeightedPoint> weightedPoints)
+    {
+        if (weightedPoints == null || weightedPoints.Count == 0)
+            throw new ArgumentException("Weighted points cannot be null or empty.", nameof(weightedPoints));
+
+        if (weightedPoints.Count == 1)
+            return weightedPoints[0].Point;
+
         var current = CalculateInitialPoint(weightedPoints);
 
         for (int i = 0; i < MaxIterations; i++)
@@ -40,8 +51,8 @@ public static class WeightedGeometricMedianCalculator
         return current;
     }
 
-    private static double GetMemberWeight(Member member) => member.NeedsPickup()
-        ? 1.6
+    public static double GetMemberWeight(Member member) => member.NeedsPickup()
+        ? member.DriverId.HasValue ? 0.9 : 1.6
         : member.TransportMode switch
     {
         TransportMode.Walking => 2.0,
@@ -77,6 +88,5 @@ public static class WeightedGeometricMedianCalculator
 
         return new Coordinate(numeratorLat / denominator, numeratorLng / denominator);
     }
-
-    private readonly record struct WeightedPoint(Coordinate Point, double Weight);
+    public readonly record struct WeightedPoint(Coordinate Point, double Weight);
 }

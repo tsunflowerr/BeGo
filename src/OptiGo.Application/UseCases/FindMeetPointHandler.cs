@@ -87,27 +87,60 @@ public class FindMeetPointHandler : IRequestHandler<FindMeetPointCommand, FindMe
                 ? request.Category
                 : (!string.IsNullOrWhiteSpace(session.QueryText) ? session.QueryText : "cafe");
 
-            _logger.LogInformation("Starting AI resolution for query: '{Query}'", queryText);
-            var category = await _aiService.ResolveCategoryAsync(queryText, cancellationToken);
-            _logger.LogInformation("AI resolved query '{Query}' → category '{Category}'", queryText, category);
+            _logger.LogInformation(
+                "Searching venues by natural language query '{Query}' at {Lat},{Lng}",
+                queryText,
+                geometricMedian.Latitude,
+                geometricMedian.Longitude);
 
-            _logger.LogInformation("Searching venues for category '{Category}' at {Lat},{Lng}", category, geometricMedian.Latitude, geometricMedian.Longitude);
-            var rawVenues = await _placesProvider.SearchNearbyAsync(
+            var textVenues = await _placesProvider.SearchTextAsync(
                 geometricMedian.Latitude,
                 geometricMedian.Longitude,
-                category,
+                queryText,
                 radiusMeters: InitialVenueSearchRadiusMeters,
                 limit: DesiredNearbyVenueCount,
                 cancellationToken);
+
+            var rawVenues = textVenues;
+            if (textVenues.Count < DesiredNearbyVenueCount)
+            {
+                _logger.LogInformation(
+                    "Text search returned {Count}/{Target} venues for '{Query}'. Resolving broad fallback category.",
+                    textVenues.Count,
+                    DesiredNearbyVenueCount,
+                    queryText);
+                var category = await _aiService.ResolveCategoryAsync(queryText, cancellationToken);
+                _logger.LogInformation("AI resolved fallback category for '{Query}' → '{Category}'", queryText, category);
+
+                var fallbackVenues = await _placesProvider.SearchNearbyAsync(
+                    geometricMedian.Latitude,
+                    geometricMedian.Longitude,
+                    category,
+                    radiusMeters: InitialVenueSearchRadiusMeters,
+                    limit: DesiredNearbyVenueCount,
+                    cancellationToken);
+
+                rawVenues = MergeTextFirst(textVenues, fallbackVenues, DesiredNearbyVenueCount);
+            }
 
             if (rawVenues.Count == 0)
             {
                 throw new InvalidOperationException("No venues found around the median point.");
             }
 
+            var offlineFilteredVenues = CandidateFilter.FilterTopCandidates(
+                session.Members.ToList(),
+                rawVenues,
+                FilteredVenueCount);
+
+            _logger.LogInformation(
+                "Offline filtered venues from {RawCount} to {FilteredCount} before route-aware Mapbox scoring.",
+                rawVenues.Count,
+                offlineFilteredVenues.Count);
+
             var filteredVenues = await _venuePrefilter.FilterTopCandidatesAsync(
                 session,
-                rawVenues,
+                offlineFilteredVenues,
                 topN: FilteredVenueCount,
                 cancellationToken);
             var plannedCandidates = await PlanCandidatesAsync(session, filteredVenues, cancellationToken);
@@ -239,5 +272,30 @@ public class FindMeetPointHandler : IRequestHandler<FindMeetPointCommand, FindMe
 
         return (await Task.WhenAll(tasks))
             .ToList();
+    }
+
+    private static IReadOnlyList<Venue> MergeTextFirst(
+        IReadOnlyList<Venue> textVenues,
+        IReadOnlyList<Venue> fallbackVenues,
+        int limit)
+    {
+        var merged = new List<Venue>(Math.Min(limit, textVenues.Count + fallbackVenues.Count));
+        var seen = new HashSet<string>(StringComparer.Ordinal);
+
+        foreach (var venue in textVenues.Concat(fallbackVenues))
+        {
+            if (!seen.Add(venue.Id))
+            {
+                continue;
+            }
+
+            merged.Add(venue);
+            if (merged.Count >= limit)
+            {
+                break;
+            }
+        }
+
+        return merged;
     }
 }

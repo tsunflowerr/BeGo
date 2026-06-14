@@ -1,6 +1,8 @@
 using System.Globalization;
 using System.Net.Http.Json;
+using System.Text.Json;
 using System.Text.Json.Serialization;
+using Microsoft.Extensions.Caching.Distributed;
 using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Options;
 using OptiGo.Application.Interfaces;
@@ -10,6 +12,8 @@ namespace OptiGo.Infrastructure.ExternalServices.Mapbox;
 
 public class MapboxMeetingPointProvider : IMeetingPointProvider
 {
+    private static readonly TimeSpan CacheTtl = TimeSpan.FromHours(6);
+
     private static readonly MeetingPointQuery[] Queries =
     [
         new("convenience store", "convenience_store", 0.95),
@@ -17,21 +21,23 @@ public class MapboxMeetingPointProvider : IMeetingPointProvider
         new("gas station", "gas_station", 0.9),
         new("parking", "parking", 0.82),
         new("bus station", "bus_station", 0.8),
-        new("school", "school", 0.72),
         new("shopping mall", "shopping_mall", 0.78)
     ];
 
     private readonly HttpClient _httpClient;
     private readonly MapboxOptions _options;
+    private readonly IDistributedCache _cache;
     private readonly ILogger<MapboxMeetingPointProvider> _logger;
 
     public MapboxMeetingPointProvider(
         HttpClient httpClient,
         IOptions<MapboxOptions> options,
+        IDistributedCache cache,
         ILogger<MapboxMeetingPointProvider> logger)
     {
         _httpClient = httpClient;
         _options = options.Value;
+        _cache = cache;
         _logger = logger;
     }
 
@@ -43,6 +49,11 @@ public class MapboxMeetingPointProvider : IMeetingPointProvider
     {
         if (string.IsNullOrWhiteSpace(_options.ApiKey))
             return [];
+
+        var cacheKey = BuildCacheKey(passengerLocation, radiusMeters, limit);
+        var cached = await TryGetCachedAsync(cacheKey, ct);
+        if (cached != null)
+            return cached;
 
         var unique = new Dictionary<string, MeetingPointCandidate>(StringComparer.OrdinalIgnoreCase);
         var perQueryLimit = Math.Max(2, Math.Min(5, (int)Math.Ceiling(limit / (double)Queries.Length) + 1));
@@ -72,12 +83,57 @@ public class MapboxMeetingPointProvider : IMeetingPointProvider
             }
         }
 
-        return unique.Values
+        var candidates = unique.Values
             .OrderByDescending(candidate => candidate.PickupFriendlyScore)
             .ThenBy(candidate => passengerLocation.DistanceTo(candidate.Location))
             .Take(limit)
             .ToList();
+
+        await TrySetCachedAsync(cacheKey, candidates, ct);
+        return candidates;
     }
+
+    private async Task<IReadOnlyList<MeetingPointCandidate>?> TryGetCachedAsync(
+        string cacheKey,
+        CancellationToken ct)
+    {
+        try
+        {
+            var json = await _cache.GetStringAsync(cacheKey, ct);
+            return string.IsNullOrWhiteSpace(json)
+                ? null
+                : JsonSerializer.Deserialize<List<MeetingPointCandidate>>(json);
+        }
+        catch (Exception ex)
+        {
+            _logger.LogWarning(ex, "Mapbox meeting point cache get failed for {CacheKey}", cacheKey);
+            return null;
+        }
+    }
+
+    private async Task TrySetCachedAsync(
+        string cacheKey,
+        IReadOnlyList<MeetingPointCandidate> candidates,
+        CancellationToken ct)
+    {
+        try
+        {
+            await _cache.SetStringAsync(
+                cacheKey,
+                JsonSerializer.Serialize(candidates),
+                new DistributedCacheEntryOptions { AbsoluteExpirationRelativeToNow = CacheTtl },
+                ct);
+        }
+        catch (Exception ex)
+        {
+            _logger.LogWarning(ex, "Mapbox meeting point cache set failed for {CacheKey}", cacheKey);
+        }
+    }
+
+    private static string BuildCacheKey(Coordinate passengerLocation, double radiusMeters, int limit) =>
+        string.Create(
+            CultureInfo.InvariantCulture,
+            $"mapbox:pickup-poi:v2:{passengerLocation.Latitude:F4}:{passengerLocation.Longitude:F4}:{radiusMeters:F0}:{limit}:{Queries.Length}");
 
     private async Task<MapboxSearchBoxResponse> SearchAsync(
         Coordinate passengerLocation,

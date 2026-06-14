@@ -1487,15 +1487,20 @@ function JoinRoomModal({
 
 function TestMemberModal({ isOpen, sessionId, memberCount, onClose, onAdded }: { isOpen: boolean; sessionId: string; memberCount: number; onClose: () => void; onAdded: () => Promise<void> }) {
   const [name, setName] = useState(`Test ${memberCount + 1}`);
+  const [mobilityRole, setMobilityRole] = useState<MemberMobilityRole>(MemberMobilityRole.SelfTravel);
   const [transportMode, setTransportMode] = useState<TransportMode>(TransportMode.Motorbike);
   const [location, setLocation] = useState(randomHanoiLocation());
   const [error, setError] = useState<string | null>(null);
   const [isSubmitting, setIsSubmitting] = useState(false);
 
+  const needsPickup = mobilityRole === MemberMobilityRole.NeedsPickup;
+
   useEffect(() => {
     if (isOpen) {
       setName(`Test ${memberCount + 1}`);
       setLocation(randomHanoiLocation());
+      setMobilityRole(MemberMobilityRole.SelfTravel);
+      setTransportMode(TransportMode.Motorbike);
     }
   }, [isOpen, memberCount]);
 
@@ -1509,12 +1514,12 @@ function TestMemberModal({ isOpen, sessionId, memberCount, onClose, onAdded }: {
     setIsSubmitting(true);
     setError(null);
     try {
-      await api.sessions.join(sessionId, {
+      await api.sessions.addTestMember(sessionId, {
         memberName: name.trim(),
         latitude: location.latitude,
         longitude: location.longitude,
-        transportMode,
-        mobilityRole: transportMode === TransportMode.Walking ? MemberMobilityRole.NeedsPickup : MemberMobilityRole.SelfTravel,
+        transportMode: needsPickup ? TransportMode.Walking : transportMode,
+        mobilityRole,
       });
       await onAdded();
       onClose();
@@ -1539,12 +1544,43 @@ function TestMemberModal({ isOpen, sessionId, memberCount, onClose, onAdded }: {
           Name
           <input className="bego-input" value={name} onChange={(event) => setName(event.target.value)} />
         </label>
-        <label className="mt-4 grid gap-2 font-black">
-          Transport mode
-          <select className="bego-input" value={transportMode} onChange={(event) => setTransportMode(Number(event.target.value) as TransportMode)}>
-            {transportModes.map((mode) => <option key={mode} value={mode}>{transportModeLabels[mode]}</option>)}
-          </select>
-        </label>
+        <div className="mt-4">
+          <p className="font-black">Mobility</p>
+          <div className="mt-2 grid grid-cols-2 gap-2">
+            <button
+              type="button"
+              id="test-mobility-self"
+              onClick={() => setMobilityRole(MemberMobilityRole.SelfTravel)}
+              className={`rounded-2xl border-2 border-[#172033] px-4 py-2.5 text-sm font-black transition-colors ${
+                !needsPickup
+                  ? "bg-[#172033] text-white shadow-[3px_3px_0_#64748b]"
+                  : "bg-white text-[#172033] shadow-[3px_3px_0_#d8e3ea] hover:bg-[#f6fcff]"
+              }`}
+            >
+              🚗 Self travel
+            </button>
+            <button
+              type="button"
+              id="test-mobility-pickup"
+              onClick={() => setMobilityRole(MemberMobilityRole.NeedsPickup)}
+              className={`rounded-2xl border-2 border-[#172033] px-4 py-2.5 text-sm font-black transition-colors ${
+                needsPickup
+                  ? "bg-[#f7c948] text-[#172033] shadow-[3px_3px_0_#64748b]"
+                  : "bg-white text-[#172033] shadow-[3px_3px_0_#d8e3ea] hover:bg-[#fff7dc]"
+              }`}
+            >
+              🙋 Needs pickup
+            </button>
+          </div>
+        </div>
+        {!needsPickup && (
+          <label className="mt-4 grid gap-2 font-black">
+            Transport mode
+            <select className="bego-input" value={transportMode} onChange={(event) => setTransportMode(Number(event.target.value) as TransportMode)}>
+              {transportModes.map((mode) => <option key={mode} value={mode}>{transportModeLabels[mode]}</option>)}
+            </select>
+          </label>
+        )}
         <div className="mt-4 rounded-2xl border-2 border-[#172033] bg-[#fff7dc] p-4">
           <p className="font-black">{location.label}</p>
           <p className="mt-1 text-sm font-bold text-[#64748b]">{location.latitude.toFixed(6)}, {location.longitude.toFixed(6)}</p>

@@ -1,3 +1,4 @@
+using System.Collections.Concurrent;
 using OptiGo.Application.Interfaces;
 using OptiGo.Application.UseCases;
 using OptiGo.Domain.Entities;
@@ -11,6 +12,7 @@ public class StopCandidateGenerator : IStopCandidateGenerator
     private const double EarthRadiusMeters = 6_371_000;
 
     private readonly IMeetingPointProvider _meetingPointProvider;
+    private readonly ConcurrentDictionary<string, Task<IReadOnlyList<MeetingPointCandidate>>> _pickupPointCache = new();
 
     public StopCandidateGenerator()
         : this(new NullMeetingPointProvider())
@@ -189,10 +191,11 @@ public class StopCandidateGenerator : IStopCandidateGenerator
         Coordinate passengerLocation,
         CancellationToken ct)
     {
-        var pickupPoints = await _meetingPointProvider.SearchPickupPointsAsync(
+        var pickupPoints = await GetCachedPickupPointsAsync(
+            passenger,
             passengerLocation,
             RoutingDefaults.MaxWalkDistanceMeters,
-            limit: RoutingDefaults.MaxStopsPerPassenger,
+            RoutingDefaults.MaxStopsPerPassenger,
             ct);
         var result = new List<StopCandidate>();
 
@@ -217,6 +220,40 @@ public class StopCandidateGenerator : IStopCandidateGenerator
 
         return result;
     }
+
+    private async Task<IReadOnlyList<MeetingPointCandidate>> GetCachedPickupPointsAsync(
+        Member passenger,
+        Coordinate passengerLocation,
+        double radiusMeters,
+        int limit,
+        CancellationToken ct)
+    {
+        var key = BuildPickupPointCacheKey(passenger, passengerLocation, radiusMeters, limit);
+        var task = _pickupPointCache.GetOrAdd(key, _ => _meetingPointProvider.SearchPickupPointsAsync(
+            passengerLocation,
+            radiusMeters,
+            limit,
+            ct));
+
+        try
+        {
+            return await task;
+        }
+        catch
+        {
+            _pickupPointCache.TryRemove(key, out _);
+            throw;
+        }
+    }
+
+    private static string BuildPickupPointCacheKey(
+        Member passenger,
+        Coordinate passengerLocation,
+        double radiusMeters,
+        int limit) =>
+        string.Create(
+            System.Globalization.CultureInfo.InvariantCulture,
+            $"{passenger.Id:N}|{passengerLocation.Latitude:F5}|{passengerLocation.Longitude:F5}|{radiusMeters:F0}|{limit}");
 
     private static StopCandidate? CreateSharedCandidate(
         IReadOnlyList<Member> group,

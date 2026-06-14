@@ -53,7 +53,7 @@ public class GooglePlacesProvider : IPlacesProvider
         CancellationToken ct = default)
     {
         var desiredCount = Math.Clamp(limit, 1, 50);
-        var primaryType = !string.IsNullOrWhiteSpace(category) ? category.ToLowerInvariant() : "cafe";
+        var primaryType = NormalizePlaceType(category, "cafe");
         var origin = new Coordinate(latitude, longitude);
         var initialRadius = Math.Clamp(radiusMeters, 50, MaxSearchRadiusMeters);
         var uniqueVenues = new Dictionary<string, Venue>(StringComparer.Ordinal);
@@ -155,6 +155,111 @@ public class GooglePlacesProvider : IPlacesProvider
         return orderedVenues;
     }
 
+    public async Task<IReadOnlyList<Venue>> SearchTextAsync(
+        double latitude,
+        double longitude,
+        string textQuery,
+        double radiusMeters = DefaultInitialSearchRadiusMeters,
+        int limit = 50,
+        CancellationToken ct = default)
+    {
+        if (string.IsNullOrWhiteSpace(textQuery))
+        {
+            return await SearchNearbyAsync(latitude, longitude, "cafe", radiusMeters, limit, ct);
+        }
+
+        var desiredCount = Math.Clamp(limit, 1, 50);
+        var query = textQuery.Trim();
+        var origin = new Coordinate(latitude, longitude);
+        var initialRadius = Math.Clamp(radiusMeters, 50, MaxSearchRadiusMeters);
+        var uniqueVenues = new Dictionary<string, Venue>(StringComparer.Ordinal);
+        var searchCalls = 0;
+        var lastSearchedRadius = initialRadius;
+
+        for (var currentRadius = initialRadius;
+             currentRadius <= MaxSearchRadiusMeters && uniqueVenues.Count < Math.Min(desiredCount, MaxNearbyResultsPerRequest);
+             currentRadius = Math.Min(currentRadius * 2, MaxSearchRadiusMeters))
+        {
+            var venues = await SearchTextCircleAsync(
+                latitude,
+                longitude,
+                query,
+                currentRadius,
+                Math.Min(desiredCount, MaxNearbyResultsPerRequest),
+                ct);
+
+            searchCalls++;
+            lastSearchedRadius = currentRadius;
+            MergeVenues(uniqueVenues, venues);
+
+            _logger.LogInformation(
+                "Google Text search: query='{Query}', radius={Radius}m returned {Count}, unique={Unique}/{Target}",
+                query, currentRadius, venues.Count, uniqueVenues.Count, desiredCount);
+
+            if (uniqueVenues.Count >= Math.Min(desiredCount, MaxNearbyResultsPerRequest) ||
+                currentRadius >= MaxSearchRadiusMeters)
+            {
+                break;
+            }
+        }
+
+        if (uniqueVenues.Count < desiredCount)
+        {
+            var ringOffsetMeters = Math.Max(initialRadius * 1.25, 650);
+            var satelliteRadius = Math.Max(initialRadius, Math.Min(lastSearchedRadius, 1200));
+
+            while (uniqueVenues.Count < desiredCount && ringOffsetMeters <= MaxSearchRadiusMeters * 1.5)
+            {
+                var uniqueBeforeRing = uniqueVenues.Count;
+
+                foreach (var bearing in SatelliteBearings)
+                {
+                    var satelliteCenter = OffsetCoordinate(origin, ringOffsetMeters, bearing);
+                    var venues = await SearchTextCircleAsync(
+                        satelliteCenter.Latitude,
+                        satelliteCenter.Longitude,
+                        query,
+                        satelliteRadius,
+                        MaxNearbyResultsPerRequest,
+                        ct);
+
+                    searchCalls++;
+                    MergeVenues(uniqueVenues, venues);
+
+                    _logger.LogInformation(
+                        "Google Text satellite search: query='{Query}', bearing={Bearing}, offset={Offset}m, radius={Radius}m returned {Count}, unique={Unique}/{Target}",
+                        query, bearing, ringOffsetMeters, satelliteRadius, venues.Count, uniqueVenues.Count, desiredCount);
+
+                    if (uniqueVenues.Count >= desiredCount)
+                    {
+                        break;
+                    }
+                }
+
+                if (uniqueVenues.Count == uniqueBeforeRing)
+                {
+                    break;
+                }
+
+                ringOffsetMeters = Math.Min(ringOffsetMeters * 1.6, MaxSearchRadiusMeters * 1.5);
+                satelliteRadius = Math.Min(satelliteRadius * 1.25, 1500);
+            }
+        }
+
+        var orderedVenues = uniqueVenues.Values
+            .OrderBy(v => origin.DistanceTo(v.GetLocation()))
+            .ThenByDescending(v => v.Rating)
+            .ThenByDescending(v => v.ReviewCount)
+            .Take(desiredCount)
+            .ToList();
+
+        _logger.LogInformation(
+            "Google Text search completed for query='{Query}' with {UniqueCount} unique venues after {SearchCalls} paid requests",
+            query, orderedVenues.Count, searchCalls);
+
+        return orderedVenues;
+    }
+
     public async Task<PlaceDetailResult> GetPlaceDetailAsync(string placeId, CancellationToken ct = default)
     {
         var result = new PlaceDetailResult { PlaceId = placeId };
@@ -252,9 +357,10 @@ public class GooglePlacesProvider : IPlacesProvider
     {
         const string url = "https://places.googleapis.com/v1/places:searchNearby";
 
+        var includedTypes = GetIncludedTypes(primaryType);
         var requestBody = new
         {
-            includedTypes = new[] { primaryType },
+            includedTypes,
             maxResultCount = Math.Clamp(resultCount, 1, MaxNearbyResultsPerRequest),
             languageCode = "vi",
             rankPreference = "DISTANCE",
@@ -282,8 +388,8 @@ public class GooglePlacesProvider : IPlacesProvider
         {
             var err = await response.Content.ReadAsStringAsync(ct);
             _logger.LogError(
-                "Google Places API failed for type {Category} at {Lat},{Lng}, radius={Radius}: {StatusCode} - {Error}",
-                primaryType, latitude, longitude, radiusMeters, response.StatusCode, err);
+                "Google Places API failed for types {Categories} at {Lat},{Lng}, radius={Radius}: {StatusCode} - {Error}",
+                string.Join(",", includedTypes), latitude, longitude, radiusMeters, response.StatusCode, err);
             return [];
         }
 
@@ -315,12 +421,115 @@ public class GooglePlacesProvider : IPlacesProvider
         return venues;
     }
 
+    private async Task<List<Venue>> SearchTextCircleAsync(
+        double latitude,
+        double longitude,
+        string textQuery,
+        double radiusMeters,
+        int resultCount,
+        CancellationToken ct)
+    {
+        const string url = "https://places.googleapis.com/v1/places:searchText";
+
+        var requestBody = new
+        {
+            textQuery,
+            pageSize = Math.Clamp(resultCount, 1, MaxNearbyResultsPerRequest),
+            languageCode = "vi",
+            rankPreference = "DISTANCE",
+            locationBias = new
+            {
+                circle = new
+                {
+                    center = new { latitude, longitude },
+                    radius = radiusMeters
+                }
+            }
+        };
+
+        using var request = new HttpRequestMessage(HttpMethod.Post, url)
+        {
+            Content = JsonContent.Create(requestBody)
+        };
+        request.Headers.Add("X-Goog-Api-Key", _options.ApiKey);
+        request.Headers.Add(
+            "X-Goog-FieldMask",
+            "places.id,places.displayName.text,places.primaryType,places.location,places.rating,places.userRatingCount,places.formattedAddress");
+
+        var response = await _httpClient.SendAsync(request, ct);
+        if (!response.IsSuccessStatusCode)
+        {
+            var err = await response.Content.ReadAsStringAsync(ct);
+            _logger.LogError(
+                "Google Text Search API failed for query {Query} at {Lat},{Lng}, radius={Radius}: {StatusCode} - {Error}",
+                textQuery, latitude, longitude, radiusMeters, response.StatusCode, err);
+            return [];
+        }
+
+        var result = await response.Content.ReadFromJsonAsync<GooglePlacesResponse>(cancellationToken: ct);
+        var center = new Coordinate(latitude, longitude);
+        return ConvertPlaces(result, fallbackCategory: "text_search")
+            .Where(venue => center.DistanceTo(venue.GetLocation()) <= radiusMeters)
+            .ToList();
+    }
+
+    private static List<Venue> ConvertPlaces(GooglePlacesResponse? result, string fallbackCategory)
+    {
+        if (result?.Places == null || result.Places.Count == 0)
+        {
+            return [];
+        }
+
+        var venues = new List<Venue>(result.Places.Count);
+        foreach (var place in result.Places)
+        {
+            if (place.Location == null || place.DisplayName == null || string.IsNullOrWhiteSpace(place.Id))
+            {
+                continue;
+            }
+
+            venues.Add(new Venue(
+                id: place.Id,
+                name: place.DisplayName.Text ?? "Unnamed",
+                category: place.PrimaryType ?? fallbackCategory,
+                location: new Coordinate(place.Location.Latitude, place.Location.Longitude),
+                rating: place.Rating ?? 3.0,
+                reviewCount: place.UserRatingCount ?? 0,
+                address: place.FormattedAddress ?? string.Empty
+            ));
+        }
+
+        return venues;
+    }
+
     private static void MergeVenues(IDictionary<string, Venue> target, IEnumerable<Venue> venues)
     {
         foreach (var venue in venues)
         {
             target[venue.Id] = venue;
         }
+    }
+
+    private static string NormalizePlaceType(string? category, string fallback)
+    {
+        return string.IsNullOrWhiteSpace(category)
+            ? fallback
+            : category.Trim().ToLowerInvariant();
+    }
+
+    private static string[] GetIncludedTypes(string primaryType)
+    {
+        return primaryType switch
+        {
+            "cafe" or "coffee_shop" or "coffee" =>
+            [
+                "cafe",
+                "coffee_shop",
+                "coffee_stand",
+                "coffee_roastery"
+            ],
+            _ => [primaryType]
+        };
     }
 
     private static Coordinate OffsetCoordinate(Coordinate origin, double distanceMeters, double bearingDegrees)
